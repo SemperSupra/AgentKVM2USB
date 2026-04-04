@@ -1,4 +1,5 @@
 opencv-python
 hidapi
+numpy
 pytest
 pytest-mock

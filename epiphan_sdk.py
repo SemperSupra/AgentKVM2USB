@@ -4,14 +4,18 @@ import cv2
 import threading
 import os
 import platform
+import subprocess
+import datetime
+import json
+import numpy as np
+from pathlib import Path
 
 class EpiphanKVM_SDK:
     """
-    Cross-Platform, Agent-Ready SDK for Epiphan KVM2USB 3.0.
-    Supports Windows, Linux, and macOS.
+    Enhanced, Cross-Platform, Agent-Ready SDK for Epiphan KVM2USB 3.0.
+    Includes Vision-Agent Ready Artifacts, Discovery, and Autotuning.
     """
     
-    # Standard HID Map
     KEY_MAP = {
         "a": 0x04, "b": 0x05, "c": 0x06, "d": 0x07, "e": 0x08, "f": 0x09,
         "enter": 0x28, "esc": 0x29, "backspace": 0x2A, "tab": 0x2B, "space": 0x2C,
@@ -19,8 +23,9 @@ class EpiphanKVM_SDK:
         "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52
     }
     MOD_MAP = {"ctrl": 0x01, "shift": 0x02, "alt": 0x04, "gui": 0x08, "win": 0x08, "cmd": 0x08}
+    PRESETS_FILE = Path(".kvm_presets.json")
 
-    def __init__(self):
+    def __init__(self, target_name="KVM2USB 3.0"):
         self.vid = 0x2b77
         self.pid = 0x3661
         self.kb_dev = None
@@ -30,12 +35,13 @@ class EpiphanKVM_SDK:
         self.cap = None
         self.latest_frame = None
         self._stop_video = False
+        self.last_action_text = ""
+        self.last_action_expiry = 0
         
         self._connect_hid()
-        self._auto_start_video()
+        self._auto_start_video(target_name)
 
     def _connect_hid(self):
-        """Connects to HID endpoints. Requires udev rules on Linux."""
         for d in hid.enumerate(self.vid, self.pid):
             usage = d.get('usage', 0)
             try:
@@ -44,30 +50,50 @@ class EpiphanKVM_SDK:
                 elif usage == 0x102: self.mouse_dev = dev
                 elif usage == 0x103: self.touch_dev = dev
                 elif usage == 0x104: self.sys_dev = dev
-            except Exception as e:
-                # Common on Linux if permissions are not set
-                if platform.system() == "Linux":
-                    print(f"[SDK] HID Permission Error on {d['path']}. See README for udev rules.")
-                pass
+            except: pass
 
-    def _auto_start_video(self):
-        """Cross-platform UVC discovery."""
+    def _auto_start_video(self, target_name):
+        """Cross-platform UVC discovery using OS-native names."""
+        system_names = []
         sys_name = platform.system()
         backend = cv2.CAP_ANY
-        
-        if sys_name == "Windows": backend = cv2.CAP_DSHOW
-        elif sys_name == "Linux": backend = cv2.CAP_V4L2
-        elif sys_name == "Darwin": backend = cv2.CAP_AVFOUNDATION
 
-        for i in range(10):
-            c = cv2.VideoCapture(i, backend)
-            if c.isOpened():
-                # Test for HD capability to identify KVM2USB 3.0
-                c.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                if c.get(cv2.CAP_PROP_FRAME_WIDTH) > 0:
-                    self.cap = c; break
-            c.release()
-            
+        if sys_name == "Windows":
+            backend = cv2.CAP_DSHOW
+            try:
+                cmd = ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Service -eq 'usbvideo' } | Select-Object -ExpandProperty Caption"]
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                system_names = [l.strip() for l in res.stdout.strip().split("\n") if l.strip()]
+            except: pass
+        elif sys_name == "Linux":
+            backend = cv2.CAP_V4L2
+            v4l_path = Path("/sys/class/video4linux")
+            if v4l_path.exists():
+                for dev_dir in sorted(v4l_path.glob("video*")):
+                    name_file = dev_dir / "name"
+                    if name_file.exists(): system_names.append(name_file.read_text().strip())
+        elif sys_name == "Darwin":
+            backend = cv2.CAP_AVFOUNDATION
+
+        found_index = -1
+        # First attempt: Name match
+        for i, name in enumerate(system_names):
+            if target_name.lower() in name.lower():
+                c = cv2.VideoCapture(i, backend)
+                if c.isOpened():
+                    found_index = i; self.cap = c; break
+                c.release()
+
+        # Fallback: Scan 0-10 for HD capable device
+        if not self.cap:
+            for i in range(10):
+                c = cv2.VideoCapture(i, backend)
+                if c.isOpened():
+                    c.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                    if c.get(cv2.CAP_PROP_FRAME_WIDTH) > 0:
+                        self.cap = c; found_index = i; break
+                c.release()
+                
         if self.cap:
             def _upd():
                 while not self._stop_video:
@@ -75,16 +101,44 @@ class EpiphanKVM_SDK:
                     if ret: self.latest_frame = f
                     time.sleep(0.01)
             threading.Thread(target=_upd, daemon=True).start()
+            print(f"[SDK] Connected to {target_name} at index {found_index}")
+
+    # --- VISION-AGENT ARTIFACTS ---
+    def autotune(self, target_mean=128):
+        """Automatically adjust brightness to achieve target mean pixel value."""
+        if not self.cap: return
+        print("[SDK] Autotuning signal brightness...")
+        for _ in range(5):
+            if self.latest_frame is None: time.sleep(0.1); continue
+            mean_val = np.mean(self.latest_frame)
+            diff = target_mean - mean_val
+            if abs(diff) < 10: break
+            curr = self.cap.get(cv2.CAP_PROP_BRIGHTNESS)
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, curr + (5 if diff > 0 else -5))
+            time.sleep(0.2)
+        print(f"[SDK] Autotune complete. Current mean: {np.mean(self.latest_frame):.2f}")
+
+    def get_screen(self, filename="frame.jpg", overlay=True):
+        """Capture screen with optional timestamp/event overlay."""
+        if self.latest_frame is not None:
+            frame = self.latest_frame.copy()
+            if overlay:
+                h, w = frame.shape[:2]
+                ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                cv2.putText(frame, ts, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+                if time.time() < self.last_action_expiry:
+                    cv2.putText(frame, f"ACTION: {self.last_action_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 1, cv2.LINE_AA)
+            cv2.imwrite(filename, frame)
+            return os.path.abspath(filename)
+        return None
 
     # --- AGENT ACTIONS ---
-    def click(self, x_percent, y_percent, button=1):
-        if not self.touch_dev: return
-        x = int(x_percent * 32767); y = int(y_percent * 32767)
-        report = [button & 0xFF, x & 0xFF, (x >> 8) & 0xFF, y & 0xFF, (y >> 8) & 0xFF]
-        self.touch_dev.write([0x00] + report)
-        time.sleep(0.1); self.touch_dev.write([0x00, 0, 0, 0, 0, 0])
+    def _log_action(self, text):
+        self.last_action_text = text
+        self.last_action_expiry = time.time() + 2.0
 
     def type(self, text):
+        self._log_action(f"Typed '{text}'")
         for char in text.lower():
             if char in self.KEY_MAP: self.press(char)
             elif 'a' <= char <= 'z':
@@ -95,10 +149,12 @@ class EpiphanKVM_SDK:
             time.sleep(0.05)
 
     def press(self, key_name):
+        self._log_action(f"Pressed {key_name}")
         code = self.KEY_MAP.get(key_name.lower())
         if code: self._raw_kb(0, [code]); time.sleep(0.02); self._raw_kb(0, [0])
 
     def hotkey(self, *args):
+        self._log_action(f"Hotkey {'+'.join(args)}")
         mods = 0; keys = []
         for a in args:
             a = a.lower()
@@ -106,11 +162,55 @@ class EpiphanKVM_SDK:
             elif a in self.KEY_MAP: keys.append(self.KEY_MAP[a])
         self._raw_kb(mods, keys); time.sleep(0.05); self._raw_kb(0, [0])
 
-    def get_screen(self, filename="frame.jpg"):
-        if self.latest_frame is not None:
-            cv2.imwrite(filename, self.latest_frame)
-            return os.path.abspath(filename)
-        return None
+    def click(self, x_percent, y_percent, button=1):
+        self._log_action(f"Clicked {x_percent:.2f},{y_percent:.2f}")
+        if not self.touch_dev: return
+        x = int(x_percent * 32767); y = int(y_percent * 32767)
+        report = [button & 0xFF, x & 0xFF, (x >> 8) & 0xFF, y & 0xFF, (y >> 8) & 0xFF]
+        self.touch_dev.write([0x00] + report)
+        time.sleep(0.1); self.touch_dev.write([0x00, 0, 0, 0, 0, 0])
+
+    # --- SESSION RECORDING & SRT ---
+    def record_session(self, duration_sec, filename="session.mp4"):
+        """Records video and generates an .srt file with HID event history."""
+        if not self.cap: return
+        output_path = Path(filename)
+        srt_path = output_path.with_suffix(".srt")
+        
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        h, w = self.latest_frame.shape[:2]
+        out = cv2.VideoWriter(str(output_path), fourcc, 30.0, (w, h))
+        
+        events = [] # (relative_time, text)
+        start_time = time.time()
+        print(f"[SDK] Recording session to {filename}...")
+
+        while (time.time() - start_time) < duration_sec:
+            frame = self.latest_frame.copy()
+            # Overlay logic
+            ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            cv2.putText(frame, ts, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 1)
+            
+            if time.time() < self.last_action_expiry:
+                if not events or events[-1][1] != self.last_action_text:
+                    events.append((time.time() - start_time, self.last_action_text))
+            
+            out.write(frame)
+            time.sleep(1/30.0)
+            
+        out.release()
+        
+        # Build SRT
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for i, (rel_ts, txt) in enumerate(events):
+                end_ts = rel_ts + 2.0
+                f.write(f"{i+1}\n{self._fmt_srt(rel_ts)} --> {self._fmt_srt(end_ts)}\n{txt}\n\n")
+        print(f"[SDK] Session saved. Subtitles: {srt_path}")
+
+    def _fmt_srt(self, sec):
+        h, m, s = int(sec//3600), int((sec%3600)//60), int(sec%60)
+        ms = int((sec - int(sec)) * 1000)
+        return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
     def _raw_kb(self, mods, keys):
         if not self.kb_dev: return
@@ -127,5 +227,7 @@ class EpiphanKVM_SDK:
 
 if __name__ == "__main__":
     sdk = EpiphanKVM_SDK()
-    print(f"SDK Initialized on {platform.system()}. Target detected: {sdk.cap is not None}")
+    sdk.autotune()
+    sdk.type("reboot")
+    sdk.get_screen("audit_log.jpg")
     sdk.close()
