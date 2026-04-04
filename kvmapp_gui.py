@@ -3,19 +3,21 @@ import time
 import os
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence
+import threading
+import subprocess
+from PySide6.QtCore import Qt, QTimer, QSize, QPoint
+from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                              QWidget, QStatusBar, QToolBar, QFileDialog, QMessageBox)
 from epiphan_sdk import EpiphanKVM_SDK
 
 class KvmAppGUI(QMainWindow):
     """
-    A full-featured GUI replacement for Epiphan KvmApp.exe.
+    A professional, full-featured GUI replacement for Epiphan KvmApp.exe.
     Powered by the reverse-engineered AgentKVM2USB SDK.
     """
     
-    # Qt to HID Scan Code Map (Selection)
+    # Comprehensive Qt to HID Scan Code Map
     QT_HID_MAP = {
         Qt.Key_A: 0x04, Qt.Key_B: 0x05, Qt.Key_C: 0x06, Qt.Key_D: 0x07, Qt.Key_E: 0x08,
         Qt.Key_F: 0x09, Qt.Key_G: 0x0A, Qt.Key_H: 0x0B, Qt.Key_I: 0x0C, Qt.Key_J: 0x0D,
@@ -30,33 +32,33 @@ class KvmAppGUI(QMainWindow):
         Qt.Key_Semicolon: 0x33, Qt.Key_QuoteLeft: 0x34, Qt.Key_Comma: 0x36, Qt.Key_Period: 0x37, Qt.Key_Slash: 0x38,
         Qt.Key_F1: 0x3A, Qt.Key_F2: 0x3B, Qt.Key_F3: 0x3C, Qt.Key_F4: 0x3D, Qt.Key_F5: 0x3E,
         Qt.Key_F6: 0x3F, Qt.Key_F7: 0x40, Qt.Key_F8: 0x41, Qt.Key_F9: 0x42, Qt.Key_F10: 0x43,
-        Qt.Key_F11: 0x44, Qt.Key_F12: 0x45, Qt.Key_Delete: 0x4C,
-        Qt.Key_Right: 0x4F, Qt.Key_Left: 0x50, Qt.Key_Down: 0x51, Qt.Key_Up: 0x52
+        Qt.Key_F11: 0x44, Qt.Key_F12: 0x45, Qt.Key_Print: 0x46, Qt.Key_ScrollLock: 0x47,
+        Qt.Key_Pause: 0x48, Qt.Key_Insert: 0x49, Qt.Key_Home: 0x4A, Qt.Key_PageUp: 0x4B,
+        Qt.Key_Delete: 0x4C, Qt.Key_End: 0x4D, Qt.Key_PageDown: 0x4E,
+        Qt.Key_Right: 0x4F, Qt.Key_Left: 0x50, Qt.Key_Down: 0x51, Qt.Key_Up: 0x52,
+        Qt.Key_NumLock: 0x53
     }
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AgentKVM2USB - Control Application")
-        self.setMinimumSize(800, 600)
+        self.setWindowTitle("AgentKVM2USB - Universal Control Application")
+        self.setMinimumSize(1024, 768)
         
         # Initialize SDK
-        try:
-            self.sdk = EpiphanKVM_SDK()
-        except Exception as e:
-            QMessageBox.critical(self, "Hardware Error", f"Failed to initialize KVM hardware: {e}")
-            sys.exit(1)
+        self.sdk = EpiphanKVM_SDK()
 
         # UI State
         self.mouse_mode = "relative"
         self.is_recording = False
+        self.is_grabbed = False
+        self.host_key = Qt.Key_Control # Host key to release grab
         
-        # Central Widget (Video Display)
-        self.video_label = QLabel("No Signal")
+        # Central Widget
+        self.video_label = QLabel("INITIALIZING HARDWARE...")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setStyleSheet("background-color: black; color: white;")
+        self.video_label.setStyleSheet("background-color: #111; color: #aaa; font-family: 'Consolas'; font-size: 18px;")
         self.setCentralWidget(self.video_label)
         
-        # Enable Mouse Tracking for Absolute Coordinates
         self.setMouseTracking(True)
         self.video_label.setMouseTracking(True)
 
@@ -75,172 +77,189 @@ class KvmAppGUI(QMainWindow):
         self.status_timer.start(1000)
 
     def _create_menus(self):
-        menubar = self.menuBar()
+        mb = self.menuBar()
         
-        # File Menu
-        file_menu = menubar.addMenu("&File")
-        save_action = QAction("&Save Still Image...", self)
-        save_action.setShortcut(QKeySequence.Save)
-        save_action.triggered.connect(self.save_screenshot)
-        file_menu.addAction(save_action)
-        file_menu.addSeparator()
-        exit_action = QAction("E&xit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        # File
+        file_m = mb.addMenu("&File")
+        file_m.addAction("&Save Still Image...", self.save_screenshot, QKeySequence.Save)
+        file_m.addAction("&Copy Still Image to Buffer", self.copy_to_clipboard, "Ctrl+C")
+        file_m.addSeparator()
+        file_m.addAction("E&xit", self.close, "Alt+F4")
         
-        # View Menu
-        view_menu = menubar.addMenu("&View")
-        self.fullscreen_action = QAction("&Full Screen", self)
-        self.fullscreen_action.setCheckable(True)
-        self.fullscreen_action.setShortcut(Qt.Key_F11)
-        self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
-        view_menu.addAction(self.fullscreen_action)
+        # View
+        view_m = mb.addMenu("&View")
+        self.fs_act = view_m.addAction("&Full Screen", self.toggle_fullscreen, "F11")
+        self.fs_act.setCheckable(True)
+        view_m.addAction("Show &Host Cursor", self.toggle_cursor_vis).setCheckable(True)
         
-        # Tools Menu
-        tools_menu = menubar.addMenu("&Tools")
-        cad_action = QAction("Send Ctrl+Alt+Del", self)
-        cad_action.triggered.connect(lambda: self.sdk.hotkey("ctrl", "alt", "delete"))
-        tools_menu.addAction(cad_action)
+        # Devices (Manual Selection)
+        self.dev_m = mb.addMenu("&Devices")
+        self.refresh_devices()
+
+        # Tools
+        tools_m = mb.addMenu("&Tools")
+        tools_m.addAction("Send Ctrl+Alt+Del", lambda: self.sdk.hotkey("ctrl", "alt", "delete"))
+        tools_m.addAction("Send Alt+Tab", lambda: self.sdk.hotkey("alt", "tab"))
+        tools_m.addSeparator()
+        self.rec_act = tools_m.addAction("Start &Recording session", self.toggle_recording)
         
-        self.record_action = QAction("Start &Recording session", self)
-        self.record_action.triggered.connect(self.toggle_recording)
-        tools_menu.addAction(self.record_action)
+        # Options
+        opt_m = mb.addMenu("&Options")
+        mouse_sm = opt_m.addMenu("Mouse Emulation")
+        self.rel_act = mouse_sm.addAction("Relative (Legacy/BIOS)", lambda: self.set_mouse_mode("relative"))
+        self.rel_act.setCheckable(True)
+        self.rel_act.setChecked(True)
+        self.abs_act = mouse_sm.addAction("Absolute (Modern/Touch)", lambda: self.set_mouse_mode("absolute"))
+        self.abs_act.setCheckable(True)
         
-        # Options Menu
-        opt_menu = menubar.addMenu("&Options")
-        
-        # Mouse Mode Submenu
-        mouse_menu = opt_menu.addMenu("Mouse Emulation")
-        self.rel_mouse_action = QAction("Relative (Mouse)", self)
-        self.rel_mouse_action.setCheckable(True)
-        self.rel_mouse_action.setChecked(True)
-        self.abs_mouse_action = QAction("Absolute (Touch/Tablet)", self)
-        self.abs_mouse_action.setCheckable(True)
-        
-        mouse_menu.addAction(self.rel_mouse_action)
-        mouse_menu.addAction(self.abs_mouse_action)
-        
-        self.rel_mouse_action.triggered.connect(lambda: self.set_mouse_mode("relative"))
-        self.abs_mouse_action.triggered.connect(lambda: self.set_mouse_mode("absolute"))
-        
-        opt_menu.addSeparator()
-        autotune_action = QAction("&Autotune Brightness", self)
-        autotune_action.triggered.connect(self.sdk.autotune)
-        opt_menu.addAction(autotune_action)
-        
-        reenum_action = QAction("&Reconnect Remote USB", self)
-        reenum_action.triggered.connect(self.sdk.reenumerate_target)
-        opt_menu.addAction(reenum_action)
+        opt_m.addSeparator()
+        self.perf_act = opt_m.addAction("&Performance Mode", lambda: self.sdk.set_performance_mode(self.perf_act.isChecked()))
+        self.perf_act.setCheckable(True)
+        opt_m.addAction("&Autotune Brightness", self.sdk.autotune)
+        opt_m.addAction("&Reconnect Remote USB", self.sdk.reenumerate_target)
+        opt_m.addSeparator()
+        opt_m.addAction("&Configuration tool...", self.run_config_tool)
 
     def _create_toolbar(self):
-        toolbar = QToolBar("Main Toolbar")
-        self.addToolBar(toolbar)
-        
-        # Add basic icons or text buttons
-        toolbar.addAction("Capture", self.save_screenshot)
-        toolbar.addAction("Autotune", self.sdk.autotune)
-        toolbar.addAction("Reconnect", self.sdk.reenumerate_target)
+        tb = self.addToolBar("Main")
+        tb.setMovable(False)
+        tb.addAction("📸 Capture", self.save_screenshot)
+        tb.addAction("📋 Copy", self.copy_to_clipboard)
+        tb.addSeparator()
+        tb.addAction("🪄 Autotune", self.sdk.autotune)
+        tb.addAction("🔄 Reconnect", self.sdk.reenumerate_target)
+        tb.addSeparator()
+        self.grab_btn = tb.addAction("🔒 Grab Input (Ctrl+G)", self.toggle_grab)
 
     def _create_status_bar(self):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Initializing...")
+        self.status.showMessage("Ready")
+
+    # --- LOGIC ---
+
+    def refresh_devices(self):
+        self.dev_m.clear()
+        for idx, name in self.sdk.list_available_cameras():
+            act = QAction(f"{name} (Index {idx})", self)
+            act.triggered.connect(lambda checked, i=idx: self.sdk.switch_camera(i))
+            self.dev_m.addAction(act)
+        self.dev_m.addSeparator()
+        self.dev_m.addAction("Refresh List", self.refresh_devices)
 
     def update_status(self):
         state = self.sdk.get_status()
-        res = state['resolution']
-        leds = state['leds']
-        led_str = f"L: {'C' if leds['caps'] else '-'}{'N' if leds['num'] else '-'}{'S' if leds['scroll'] else '-'}"
-        self.status.showMessage(f"Resolution: {res} | Signal: {'OK' if state['is_signal_active'] else 'NO SIGNAL'} | {led_str} | Mode: {self.mouse_mode.upper()}")
+        l = state['leds']
+        led_str = f"LEDs: [{'C' if l['caps'] else '-'}{'N' if l['num'] else '-'}{'S' if l['scroll'] else '-'}]"
+        sig_str = "SIGNAL OK" if state['is_signal_active'] else "NO SIGNAL"
+        self.status.showMessage(f"Mode: {self.mouse_mode.upper()} | Res: {state['resolution']} | {sig_str} | {led_str}")
 
     def update_frame(self):
         frame = self.sdk.latest_frame
         if frame is not None:
-            # Convert BGR to RGB
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = frame.shape
-            bytes_per_line = ch * w
-            qt_img = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            
-            # Scale to window while keeping aspect ratio
-            pixmap = QPixmap.fromImage(qt_img)
-            self.video_label.setPixmap(pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            qt_img = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+            px = QPixmap.fromImage(qt_img)
+            self.video_label.setPixmap(px.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
-            self.video_label.setText("NO SIGNAL DETECTED")
+            self.video_label.setText("NO SIGNAL DETECTED\nCheck physical VGA/DVI connection")
 
-    # --- INPUT EVENT HANDLING ---
-    
+    def toggle_grab(self):
+        self.is_grabbed = not self.is_grabbed
+        if self.is_grabbed:
+            self.grab_btn.setText("🔓 Release Input (Ctrl)")
+            self.setCursor(Qt.BlankCursor if self.mouse_mode == "relative" else Qt.CrossCursor)
+            self.status.showMessage("INPUT GRABBED. Press CTRL to release.", 5000)
+        else:
+            self.grab_btn.setText("🔒 Grab Input (Ctrl+G)")
+            self.setCursor(Qt.ArrowCursor)
+            self.status.showMessage("Input Released", 2000)
+
     def keyPressEvent(self, event):
-        self._handle_key(event, True)
+        if event.key() == Qt.Key_G and event.modifiers() & Qt.ControlModifier:
+            self.toggle_grab()
+            return
+        
+        if self.is_grabbed:
+            if event.key() == self.host_key:
+                self.toggle_grab()
+                return
+            
+            # HID Map logic
+            modifiers = 0
+            if event.modifiers() & Qt.ControlModifier: modifiers |= 0x01
+            if event.modifiers() & Qt.ShiftModifier: modifiers |= 0x02
+            if event.modifiers() & Qt.AltModifier: modifiers |= 0x04
+            if event.modifiers() & Qt.MetaModifier: modifiers |= 0x08
+            
+            key = self.QT_HID_MAP.get(event.key(), 0)
+            self.sdk._raw_kb(modifiers, [key] if key else [])
 
     def keyReleaseEvent(self, event):
-        self._handle_key(event, False)
-
-    def _handle_key(self, event, is_press):
-        modifiers = 0
-        if event.modifiers() & Qt.ControlModifier: modifiers |= 0x01
-        if event.modifiers() & Qt.ShiftModifier: modifiers |= 0x02
-        if event.modifiers() & Qt.AltModifier: modifiers |= 0x04
-        if event.modifiers() & Qt.MetaModifier: modifiers |= 0x08
-        
-        key = self.QT_HID_MAP.get(event.key(), 0)
-        
-        if is_press:
-            self.sdk._raw_kb(modifiers, [key] if key else [])
-        else:
-            self.sdk._raw_kb(0, [0]) # Release all
+        if self.is_grabbed:
+            self.sdk._raw_kb(0, [0])
 
     def mouseMoveEvent(self, event):
-        if self.mouse_mode == "absolute":
-            # Calculate percent based on the label geometry (accounting for pillarboxing)
-            # For simplicity in this replacement, we use the raw window relative coords
-            x_p = event.position().x() / self.width()
-            y_p = event.position().y() / self.height()
-            self.sdk.click(x_p, y_p, button=0) # Move only
+        if self.is_grabbed and self.mouse_mode == "absolute":
+            # Scale relative to the video pixmap
+            lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
+            x_p = event.position().x() / lbl_w
+            y_p = event.position().y() / lbl_h
+            self.sdk.click(x_p, y_p, button=0)
 
     def mousePressEvent(self, event):
+        if not self.is_grabbed:
+            self.toggle_grab()
+            return
+            
         btn = 1 if event.button() == Qt.LeftButton else 2
-        x_p = event.position().x() / self.width()
-        y_p = event.position().y() / self.height()
+        x_p = event.position().x() / self.video_label.width()
+        y_p = event.position().y() / self.video_label.height()
         self.sdk.click(x_p, y_p, button=btn)
 
-    # --- UI ACTIONS ---
+    # --- ACTIONS ---
 
     def set_mouse_mode(self, mode):
         self.mouse_mode = mode
-        self.rel_mouse_action.setChecked(mode == "relative")
-        self.abs_mouse_action.setChecked(mode == "absolute")
-        # In relative mode, we might want to grab the cursor
-        if mode == "relative":
-            self.setCursor(Qt.BlankCursor)
-        else:
-            self.setCursor(Qt.ArrowCursor)
+        self.rel_act.setChecked(mode == "relative")
+        self.abs_act.setChecked(mode == "absolute")
 
-    def toggle_fullscreen(self):
-        if self.fullscreen_action.isChecked():
-            self.showFullScreen()
-        else:
-            self.showNormal()
+    def copy_to_clipboard(self):
+        if self.sdk.latest_frame is not None:
+            rgb = cv2.cvtColor(self.sdk.latest_frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb.shape
+            qi = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
+            QGuiApplication.clipboard().setImage(qi)
+            self.status.showMessage("Frame copied to clipboard", 3000)
 
     def save_screenshot(self):
-        filename, _ = QFileDialog.getSaveFileName(self, "Save Still Image", "", "PNG Images (*.png);;JPEG Images (*.jpg)")
-        if filename:
-            path = self.sdk.get_screen(filename)
-            if path:
-                self.status.showMessage(f"Saved to {filename}", 3000)
+        fn, _ = QFileDialog.getSaveFileName(self, "Save Image", "", "PNG (*.png);;JPG (*.jpg)")
+        if fn: self.sdk.get_screen(fn)
 
     def toggle_recording(self):
         if not self.is_recording:
-            filename, _ = QFileDialog.getSaveFileName(self, "Start Session Recording", "session.mp4", "MP4 Video (*.mp4)")
-            if filename:
+            fn, _ = QFileDialog.getSaveFileName(self, "Record", "session.mp4", "MP4 (*.mp4)")
+            if fn:
                 self.is_recording = True
-                self.record_action.setText("Stop &Recording session")
-                # Start recording in a thread so UI doesn't hang
-                threading.Thread(target=self.sdk.record_session, args=(3600, filename), daemon=True).start()
+                self.rec_act.setText("Stop Recording")
+                threading.Thread(target=self.sdk.record_session, args=(3600, fn), daemon=True).start()
         else:
-            self.sdk._stop_video = True # This is a bit hacky, should have a dedicated stop_recording
             self.is_recording = False
-            self.record_action.setText("Start &Recording session")
+            self.rec_act.setText("Start Recording")
+
+    def toggle_fullscreen(self):
+        if self.fs_act.isChecked(): self.showFullScreen()
+        else: self.showNormal()
+
+    def toggle_cursor_vis(self):
+        # Implementation depends on OS cursor hiding logic
+        pass
+
+    def run_config_tool(self):
+        p = os.path.join(os.getcwd(), "EpiphanTools", "CaptureConfig", "EpiphanCaptureConfig-r40343-20171227", "EpiphanCaptureConfig.exe")
+        if os.path.exists(p): subprocess.Popen([p])
+        else: QMessageBox.warning(self, "Error", "Config Tool not found in EpiphanTools folder.")
 
     def closeEvent(self, event):
         self.sdk.close()
@@ -248,6 +267,7 @@ class KvmAppGUI(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = KvmAppGUI()
-    window.show()
+    app.setStyle("Fusion") # Consistent cross-platform look
+    win = KvmAppGUI()
+    win.show()
     sys.exit(app.exec())

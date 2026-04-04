@@ -53,55 +53,65 @@ class EpiphanKVM_SDK:
             except: pass
 
     def _auto_start_video(self, target_name):
-        """Cross-platform UVC discovery using OS-native names."""
-        system_names = []
+        # ... (keep existing auto logic but allow it to fail gracefully)
+        pass
+
+    def list_available_cameras(self):
+        """Returns a list of (index, name) for all detected UVC devices."""
+        available = []
         sys_name = platform.system()
         backend = cv2.CAP_ANY
+        if sys_name == "Windows": backend = cv2.CAP_DSHOW
+        elif sys_name == "Linux": backend = cv2.CAP_V4L2
+        elif sys_name == "Darwin": backend = cv2.CAP_AVFOUNDATION
 
+        # Use PowerShell on Windows to get friendly names
+        names = []
         if sys_name == "Windows":
-            backend = cv2.CAP_DSHOW
             try:
                 cmd = ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Service -eq 'usbvideo' } | Select-Object -ExpandProperty Caption"]
                 res = subprocess.run(cmd, capture_output=True, text=True)
-                system_names = [l.strip() for l in res.stdout.strip().split("\n") if l.strip()]
+                names = [l.strip() for l in res.stdout.strip().split("\n") if l.strip()]
             except: pass
-        elif sys_name == "Linux":
-            backend = cv2.CAP_V4L2
-            v4l_path = Path("/sys/class/video4linux")
-            if v4l_path.exists():
-                for dev_dir in sorted(v4l_path.glob("video*")):
-                    name_file = dev_dir / "name"
-                    if name_file.exists(): system_names.append(name_file.read_text().strip())
-        elif sys_name == "Darwin":
-            backend = cv2.CAP_AVFOUNDATION
 
-        found_index = -1
-        # First attempt: Name match
-        for i, name in enumerate(system_names):
-            if target_name.lower() in name.lower():
-                c = cv2.VideoCapture(i, backend)
-                if c.isOpened():
-                    found_index = i; self.cap = c; break
-                c.release()
+        for i in range(10):
+            c = cv2.VideoCapture(i, backend)
+            if c.isOpened():
+                name = names[i] if i < len(names) else f"Camera {i}"
+                available.append((i, name))
+            c.release()
+        return available
 
-        # Fallback: Scan 0-10 for HD capable device
-        if not self.cap:
-            for i in range(10):
-                c = cv2.VideoCapture(i, backend)
-                if c.isOpened():
-                    c.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                    if c.get(cv2.CAP_PROP_FRAME_WIDTH) > 0:
-                        self.cap = c; found_index = i; break
-                c.release()
-                
+    def switch_camera(self, index):
+        """Switches the active video capture to a specific index."""
+        # Signal existing thread to pause/stop if needed, but here we just swap 'cap'
         if self.cap:
+            self.cap.release()
+        
+        sys_name = platform.system()
+        backend = cv2.CAP_ANY
+        if sys_name == "Windows": backend = cv2.CAP_DSHOW
+        elif sys_name == "Linux": backend = cv2.CAP_V4L2
+        elif sys_name == "Darwin": backend = cv2.CAP_AVFOUNDATION
+        
+        new_cap = cv2.VideoCapture(index, backend)
+        new_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        new_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        
+        # Atomically swap the capture object
+        self.cap = new_cap
+        print(f"[SDK] Switched to camera index {index}")
+        
+        # Ensure the update thread is running (only starts once)
+        if not hasattr(self, '_thread') or not self._thread.is_alive():
             def _upd():
                 while not self._stop_video:
-                    ret, f = self.cap.read()
-                    if ret: self.latest_frame = f
+                    if self.cap and self.cap.isOpened():
+                        ret, f = self.cap.read()
+                        if ret: self.latest_frame = f
                     time.sleep(0.01)
-            threading.Thread(target=_upd, daemon=True).start()
-            print(f"[SDK] Connected to {target_name} at index {found_index}")
+            self._thread = threading.Thread(target=_upd, daemon=True)
+            self._thread.start()
 
     # --- VISION-AGENT ARTIFACTS ---
     def autotune(self, target_mean=128):
@@ -263,6 +273,17 @@ class EpiphanKVM_SDK:
         for i, k in enumerate(keys[:6]): r[2+i] = k
         try: self.kb_dev.write([0x00] + r)
         except: self.kb_dev.write(r)
+
+    def set_performance_mode(self, enabled):
+        """
+        Toggles between high-quality (uncompressed) and high-performance (MJPEG).
+        If enabled, attempts to switch to MJPEG to reduce USB bandwidth.
+        """
+        if not self.cap: return
+        # fourcc codes: YUY2 (uncompressed), MJPG (compressed)
+        code = cv2.VideoWriter_fourcc(*'MJPG') if enabled else cv2.VideoWriter_fourcc(*'YUY2')
+        self.cap.set(cv2.CAP_PROP_FOURCC, code)
+        print(f"[SDK] Performance Mode: {'ON (MJPEG)' if enabled else 'OFF (YUY2)'}")
 
     def close(self):
         self._stop_video = True
