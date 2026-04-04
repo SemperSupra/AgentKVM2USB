@@ -212,6 +212,51 @@ class EpiphanKVM_SDK:
         ms = int((sec - int(sec)) * 1000)
         return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
+    # --- SYSTEM DIAGNOSTICS ---
+    def get_status(self):
+        """Returns hardware status dictionary for ANY connected target."""
+        w, h = self.get_input_resolution()
+        leds = self.get_led_status()
+        return {
+            "resolution": f"{w}x{h}",
+            "is_signal_active": w > 0,
+            "leds": leds
+        }
+
+    def get_input_resolution(self):
+        """Returns (width, height) currently being output by the target."""
+        if not self.sys_dev: return (0, 0)
+        try:
+            # Feature Report 0 usually contains the resolution info
+            data = self.sys_dev.get_feature_report(0, 9)
+            if len(data) >= 5:
+                return (data[1] | (data[2] << 8), data[3] | (data[4] << 8))
+        except: pass
+        return (0, 0)
+
+    def get_led_status(self):
+        """Returns dict of LED states from the target (NumLock, CapsLock, ScrollLock)."""
+        if not self.kb_dev: return {"caps": False, "num": False, "scroll": False}
+        try:
+            # Standard HID Keyboard Output report for LEDs
+            data = self.kb_dev.get_feature_report(0, 2)
+            if len(data) >= 2:
+                b = data[1]
+                return {"num": bool(b&1), "caps": bool(b&2), "scroll": bool(b&4)}
+        except: pass
+        return {"caps": False, "num": False, "scroll": False}
+
+    def reenumerate_target(self):
+        """Digitally 'unplugs' and 'replugs' the KVM from the target's perspective."""
+        if not self.sys_dev: return
+        print("[SDK] Re-enumerating target USB device...")
+        report = [0x01] + [0x00] * 7 
+        try:
+            self.sys_dev.write([0x00] + report)
+        except:
+            self.sys_dev.write(report)
+        time.sleep(2)
+
     def _raw_kb(self, mods, keys):
         if not self.kb_dev: return
         r = [0x00]*8; r[0] = mods
