@@ -9,4 +9,4 @@ This file tracks advanced features that require USB protocol sniffing (Wireshark
 
 ## Optimization
 - [ ] **HID Macro Engine:** Build a high-level DSL for complex key combinations (e.g., `ctrl+alt+t`).
-- [ ] **OpenCV Template Library:** Pre-captured images of the Terasic DE2-115 boot screens for automated state detection.
+- [ ] **OpenCV Template Library:** Pre-captured images of the Spartan-6 / FX3 boot screens for automated state detection.

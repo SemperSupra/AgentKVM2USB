@@ -22,7 +22,7 @@ def find_kvm2usb_camera():
 
 def capture_fpga_output():
     """
-    Connects to the Terasic DE2-115 via the KVM2USB 3.0 and captures frames.
+    Connects to the Spartan-6 / FX3 via the KVM2USB 3.0 and captures frames.
     """
     cam_idx = find_kvm2usb_camera()
     if cam_idx == -1:
@@ -36,7 +36,7 @@ def capture_fpga_output():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     cap.set(cv2.CAP_PROP_FPS, 60)
     
-    print("[*] Starting automated capture of Terasic DE2-115. Press 'q' to quit.")
+    print("[*] Starting automated capture of Spartan-6 / FX3. Press 'q' to quit.")
     
     try:
         while True:
@@ -46,11 +46,11 @@ def capture_fpga_output():
                 break
                 
             # Automation Logic Goes Here
-            # For example: template matching to detect if the DE2-115 booted correctly
+            # For example: template matching to detect if the Spartan-6 / FX3 booted correctly
             # match = cv2.matchTemplate(frame, template_image, cv2.TM_CCOEFF_NORMED)
             
             # Display the stream
-            cv2.imshow('Terasic DE2-115 (Epiphan KVM2USB 3.0)', frame)
+            cv2.imshow('Spartan-6 / FX3 (Epiphan KVM2USB 3.0)', frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
