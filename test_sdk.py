@@ -96,6 +96,47 @@ class TestEpiphanKVM:
         assert report[3] == 0xFF 
         assert report[4] == 0x3F
 
+    def test_run_macro(self, sdk, mocker):
+        """Validates the HID Macro DSL parsing and execution."""
+        spy_delay = mocker.spy(time, 'sleep')
+        spy_type = mocker.spy(sdk, 'type')
+        spy_press = mocker.spy(sdk, 'press')
+        spy_hotkey = mocker.spy(sdk, 'hotkey')
+        spy_click = mocker.spy(sdk, 'click')
+
+        macro_script = """
+        # This is a comment
+        DELAY 100
+        TYPE hello
+        PRESS enter
+        HOTKEY ctrl alt delete
+        CLICK 0.5 0.5 2
+        """
+
+        sdk.run_macro(macro_script)
+
+        assert spy_delay.called
+        assert spy_delay.call_args_list[0][0][0] == 0.1  # 100 ms = 0.1 seconds
+
+        assert spy_type.called
+        assert spy_type.call_args_list[0][0][0] == "hello"
+
+        # `type` internally calls `press` for each character it can't map
+        # But we want to assert that our macro explicitly called press for "enter"
+        # Find the call args that match "enter"
+        press_calls = [call[0][0] for call in spy_press.call_args_list]
+        assert "enter" in press_calls
+
+        assert spy_hotkey.called
+        assert spy_hotkey.call_args_list[0][0] == ("ctrl", "alt", "delete")
+
+        assert spy_click.called
+        assert spy_click.call_args_list[0][0] == (0.5, 0.5, 2)
+
+        # Test error handling (should not crash)
+        sdk.run_macro("INVALID_CMD")
+        sdk.run_macro("CLICK 0.5") # Missing Y
+
     # --- 4. SESSION RECORDING & SRT ---
     def test_session_recording_and_srt(self, sdk):
         """Verifies session recording generates both MP4 and sidecar SRT."""

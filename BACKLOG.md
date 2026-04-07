@@ -8,5 +8,4 @@ This file tracks advanced features that require USB protocol sniffing (Wireshark
 - [ ] **Advanced Signal Diagnostics:** Extract raw VGA/DVI sync timing parameters (H-Sync, V-Sync, Phase) programmatically.
 
 ## Optimization
-- [ ] **HID Macro Engine:** Build a high-level DSL for complex key combinations (e.g., `ctrl+alt+t`).
 - [ ] **OpenCV Template Library:** Pre-captured images of the Spartan-6 / FX3 boot screens for automated state detection.
