@@ -4,7 +4,7 @@ This report documents the internal hardware components and communication protoco
 
 ## Architecture Overview
 The current understood mixed-signal pipeline is:
-`VGA (analog) → ISL98002 → FPGA → DDR → FX3 → USB`
+`VGA (analog) → ISL98002CRZ (ADC) → FPGA (Xilinx Spartan-6 XC6SLX16) → DDR → FX3 (CYUSB3014) → USB`
 
 *Note: The digital (HDMI/DVI) capture path is not yet confirmed and requires further inspection. No specific HDMI receiver IC is assumed at this time.*
 
@@ -31,13 +31,13 @@ The FPGA acts as the bridge between the high-speed video receiver and the USB co
 
 ---
 
-## 3. High-Performance Video Receiver (Digitizer)
+## 3. Video Receiver (Digitizer)
 **Component:** Intersil ISL98002CRZ (Analog ADC)
 **Confidence Level:** Confirmed (based on physical inspection)
 
 ### Technical Analysis:
 The ISL98002CRZ serves as the analog front-end for video capture.
-*   **VGA Capture:** This chip acts as a high-performance analog ADC, providing explicit VGA/RGB capture capability.
+*   **VGA Capture:** This chip acts as an analog ADC, providing VGA/RGB capture capability.
 *   **Digital Capture:** The components for DVI/HDMI (Digital) capture are not yet identified and require further inspection.
 
 ---
@@ -83,4 +83,4 @@ The ISL98002CRZ serves as the analog front-end for video capture.
 ---
 
 ## 8. Conclusion
-The Epiphan KVM2USB 3.0 is built on a mixed-signal architecture. Analog VGA capture is handled by an ISL98002CRZ ADC, which feeds into a Xilinx Spartan-6 FPGA for high-performance bridging and video processing, buffering via external DDR SDRAM. Dedicated USB 3.0 communication (FX3) manages UVC and HID enumeration. While the analog path is well-understood, the digital video (HDMI) capture path remains unidentified and requires further inspection.
+The Epiphan KVM2USB 3.0 is built on a mixed-signal architecture. Analog VGA capture is handled by an ISL98002CRZ ADC, which feeds into a Xilinx Spartan-6 FPGA for bridging and video processing, buffering via external DDR SDRAM. Dedicated USB 3.0 communication (FX3) manages UVC and HID enumeration. While the analog path is well-understood, the digital video (HDMI) capture path remains unidentified and requires further inspection.
