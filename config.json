@@ -1,0 +1,7 @@
+{
+    "startup_preset": "Default",
+    "device_mappings": {
+        "Test Cam A": "High Sensitivity",
+        "Test Cam B": "VGA Legacy"
+    }
+}

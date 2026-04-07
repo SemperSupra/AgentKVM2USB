@@ -4,3 +4,4 @@ numpy
 PySide6
 pytest
 pytest-mock
+pygrabber

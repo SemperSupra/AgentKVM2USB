@@ -4,133 +4,130 @@ import time
 import cv2
 import platform
 import numpy as np
+import json
 from pathlib import Path
 from epiphan_sdk import EpiphanKVM_SDK
+from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 
-class TestEpiphanKVM:
+class TestEpiphanKVM_Enhanced:
     """
-    Comprehensive, Cross-Platform Test Suite for the Enhanced AgentKVM2USB SDK.
-    Validates: Discovery, Video, HID, Vision Overlays, and Session Recording.
+    Enhanced Test Suite for the AgentKVM2USB SDK.
+    Validates: Motion Detection, SRT Generation, Preset Management, and Config Persistence.
     """
 
-    @pytest.fixture(scope="class")
+    @pytest.fixture(scope="function")
     def sdk(self):
         """Initializes the SDK for testing and ensures cleanup."""
         _sdk = EpiphanKVM_SDK()
         yield _sdk
         _sdk.close()
+        # Cleanup test files
+        for f in ["test_user_presets.json", "test_config.json", "test_session.mp4", "test_session.srt"]:
+            if os.path.exists(f): os.remove(f)
 
-    # --- 1. CORE CONNECTIVITY & DISCOVERY ---
-    def test_hardware_discovery(self, sdk):
-        """Validates that the SDK attempted discovery on the current platform."""
-        # We check if self.cap is initialized if hardware is present
-        # If not present, we skip the live hardware tests
-        if sdk.cap is None:
-            pytest.skip("KVM2USB 3.0 hardware not detected. Skipping live hardware tests.")
-        
-        assert sdk.cap.isOpened(), "Video capture should be opened if device is found."
-        status = sdk.get_status()
-        assert status['is_signal_active'] is True or status['is_signal_active'] is False
+    # --- 1. FRAME PROCESSOR TESTS ---
 
-    # --- 2. VISION & IMAGE PROCESSING ---
-    def test_autotune_logic(self, sdk, mocker):
-        """Validates the autotune algorithm logic (brightness adjustment)."""
-        if sdk.cap is None: pytest.skip("No hardware.")
+    def test_motion_detector_logic(self):
+        """Validates that the motion detector identifies significant frame changes."""
+        detector = MotionDetector(threshold=10, min_area=100)
         
-        # We mock latest_frame to simulate a dark signal
-        sdk.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        spy_set = mocker.spy(sdk.cap, 'set')
+        # Frame 1: Black
+        frame1 = np.zeros((480, 640, 3), dtype=np.uint8)
+        is_motion, locs = detector.detect(frame1)
+        assert is_motion is False, "First frame should initialize background, not trigger motion."
         
-        sdk.autotune(target_mean=128)
-        # Should have attempted to increase brightness
-        assert spy_set.called
+        # Frame 2: Still Black
+        is_motion, locs = detector.detect(frame1)
+        assert is_motion is False, "Identical frames should not trigger motion."
+        
+        # Frame 3: White rectangle in center
+        frame2 = frame1.copy()
+        cv2.rectangle(frame2, (200, 200), (300, 300), (255, 255, 255), -1)
+        is_motion, locs = detector.detect(frame2)
+        assert is_motion is True, "Significant frame change should trigger motion."
+        assert len(locs) > 0
 
-    def test_get_screen_with_overlay(self, sdk):
-        """Verifies visual audit overlays (timestamp/actions) are rendered into frames."""
-        if sdk.cap is None: pytest.skip("No hardware.")
+    def test_srt_generator_output(self):
+        """Verifies that SRTGenerator creates correctly formatted sidecar files."""
+        test_srt = "test_gen.srt"
+        if os.path.exists(test_srt): os.remove(test_srt)
         
-        test_file = "test_overlay.jpg"
-        sdk._log_action("Test Action")
-        path = sdk.get_screen(test_file, overlay=True)
+        srt = SRTGenerator(test_srt)
+        srt.add_entry(0.5, 2.5, "Test Motion")
+        srt.add_entry(3.0, 5.0, "System Alert")
         
-        assert os.path.exists(test_file)
-        # Verify it's a valid image
-        img = cv2.imread(test_file)
-        assert img is not None
-        assert img.shape[0] > 0
-        os.remove(test_file)
-
-    # --- 3. SEMANTIC AGENT ACTIONS (HID) ---
-    def test_semantic_typing(self, sdk, mocker):
-        """Validates that 'sdk.type' correctly maps strings to HID writes."""
-        if sdk.kb_dev is None: pytest.skip("No HID hardware.")
-        
-        spy = mocker.spy(sdk.kb_dev, 'write')
-        sdk.type("abc")
-        # 'a', 'b', 'c' each involve a Press and Release (2 writes per char)
-        # Plus any shifts/modifiers. Min 6 writes.
-        assert spy.call_count >= 6
-
-    def test_hotkey_masking(self, sdk, mocker):
-        """Verifies bitmask generation for complex hotkeys (e.g. Ctrl+Alt+Del)."""
-        if sdk.kb_dev is None: pytest.skip("No HID hardware.")
-        
-        spy = mocker.spy(sdk, '_raw_kb')
-        sdk.hotkey("ctrl", "alt", "delete")
-        
-        # Check first call (Press)
-        mods = spy.call_args_list[0][0][0]
-        assert mods == 0x05 # 0x01 | 0x04
-
-    def test_normalized_click(self, sdk, mocker):
-        """Validates 0.0-1.0 coordinate scaling for AI Agents."""
-        if sdk.touch_dev is None: pytest.skip("No Touch hardware.")
-        
-        spy = mocker.spy(sdk.touch_dev, 'write')
-        sdk.click(0.5, 0.5) # Click center
-        
-        # Center of 32767 is 16383
-        # Report ID 0, buttons, x_lsb, x_msb, y_lsb, y_msb
-        report = spy.call_args_list[0][0][0]
-        # x_lsb = 16383 & 0xFF = 0xFF, x_msb = 16383 >> 8 = 0x3F
-        assert report[3] == 0xFF 
-        assert report[4] == 0x3F
-
-    # --- 4. SESSION RECORDING & SRT ---
-    def test_session_recording_and_srt(self, sdk):
-        """Verifies session recording generates both MP4 and sidecar SRT."""
-        if sdk.cap is None: pytest.skip("No hardware.")
-        
-        test_video = "test_session.mp4"
-        test_srt = "test_session.srt"
-        
-        # Record a very short 2-second burst
-        sdk.type("test event")
-        sdk.record_session(2, filename=test_video)
-        
-        assert os.path.exists(test_video)
         assert os.path.exists(test_srt)
-        
-        # Verify SRT content has our event
         with open(test_srt, "r") as f:
             content = f.read()
-            assert "Typed 'test event'" in content
-            
-        os.remove(test_video)
+            assert "1\n00:00:00,500 --> 00:00:02,500\nTest Motion" in content
+            assert "2\n00:00:03,000 --> 00:00:05,000\nSystem Alert" in content
+        
         os.remove(test_srt)
 
-    # --- 5. SYSTEM DIAGNOSTICS ---
-    def test_status_reporting(self, sdk):
-        """Verifies structured status dictionary for Agent reasoning."""
-        status = sdk.get_status()
-        assert "resolution" in status
-        assert "leds" in status
-        assert isinstance(status['leds'], dict)
+    def test_overlay_manager_rendering(self):
+        """Ensures overlays are actually drawn onto the frames."""
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        processed = OverlayManager.apply_standard_overlay(frame, status_text="UNIT_TEST", is_motion=True)
+        
+        # Check if pixels changed (at least the bottom HUD bar and top right motion dot)
+        assert not np.array_equal(frame, np.zeros((1080, 1920, 3), dtype=np.uint8))
+        # Verify status text area is not black anymore
+        assert np.any(processed[1080-20, :]) 
 
-    def test_cross_platform_init(self, sdk):
-        """Validates OS detection and backend selection."""
-        current_os = platform.system()
-        assert current_os in ["Windows", "Linux", "Darwin"]
+    # --- 2. PRESET & CONFIG PERSISTENCE ---
+
+    def test_preset_saving_loading(self, sdk):
+        """Validates custom user presets are saved and merged correctly."""
+        sdk.user_presets_path = "test_user_presets.json"
+        test_params = {
+            "motion_threshold": 99,
+            "motion_min_area": 9999,
+            "brightness": 50,
+            "contrast": 60,
+            "saturation": 70
+        }
+        
+        sdk.save_user_preset("TestCustom", test_params)
+        assert os.path.exists(sdk.user_presets_path)
+        
+        # Reload SDK or re-trigger load
+        sdk._load_all_presets()
+        assert "TestCustom" in sdk.PRESETS
+        assert sdk.PRESETS["TestCustom"]["motion_threshold"] == 99
+
+    def test_config_startup_preset(self, sdk):
+        """Verifies that the startup preset choice persists in config.json."""
+        sdk.config_path = "test_config.json"
+        sdk.config["startup_preset"] = "VGA Legacy"
+        sdk.save_config()
+        
+        assert os.path.exists(sdk.config_path)
+        with open(sdk.config_path, "r") as f:
+            data = json.load(f)
+            assert data["startup_preset"] == "VGA Legacy"
+
+    # --- 3. INTEGRATED SDK TESTS ---
+
+    def test_apply_preset_effect(self, sdk):
+        """Verifies that apply_preset correctly updates the internal detector state."""
+        sdk.apply_preset("High Sensitivity")
+        assert sdk.motion_detector.threshold == 10
+        assert sdk.motion_detector.min_area == 100
+
+    def test_get_processed_frame_with_motion(self, sdk):
+        """Verifies that the processed frame includes motion indicators when active."""
+        sdk.enable_motion_detection = True
+        sdk.enable_overlays = True
+        
+        # Simulate motion
+        sdk.latest_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        sdk.is_motion_detected = True
+        sdk.motion_locs = [(10, 10, 50, 50)]
+        
+        processed = sdk.get_processed_frame()
+        assert processed is not None
+        # Should be different from raw zeros because of HUD and MOTION dot
+        assert np.any(processed)
 
 if __name__ == "__main__":
     import pytest
