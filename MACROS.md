@@ -1,6 +1,6 @@
 # AgentKVM2USB Macro Language
 
-The SDK includes a built-in Macro Engine that allows you to define complex, multi-step routines using a simple Domain Specific Language (DSL). This is particularly useful for tasks like navigating BIOS menus, executing predefined install scripts, or performing repetitive actions reliably.
+The SDK includes a Macro Engine that processes a Domain Specific Language (DSL) for executing sequential KVM operations.
 
 ## How to Run a Macro
 
@@ -25,26 +25,24 @@ sdk.run_macro(macro_script)
 
 ## Available Commands
 
-The DSL supports the following commands. Commands are case-insensitive, but convention is to use uppercase. Blank lines and lines starting with `#` are ignored.
+The DSL supports the following commands. Commands are case-insensitive; convention is to use uppercase. Blank lines and lines beginning with `#` are ignored.
 
 ### `DELAY <ms>`
-Pauses the execution for the specified number of milliseconds.
-**Example:** `DELAY 500` (Wait half a second)
+Suspends execution for the specified integer milliseconds.
+**Example:** `DELAY 500`
 
 ### `TYPE <string>`
-Types the literal text sequence. This is useful for typing out commands or passwords. Note that special keys should be pressed individually.
+Injects the literal string characters sequentially.
 **Example:** `TYPE admin`
 
 ### `PRESS <key>`
-Presses and releases a single key. Valid keys include a-z, 0-9, `enter`, `esc`, `backspace`, `tab`, `space`, `f1`-`f12`, `delete`, `up`, `down`, `left`, `right`.
+Injects a down/up sequence for a specified key. Valid keys: a-z, 0-9, `enter`, `esc`, `backspace`, `tab`, `space`, `f1`-`f12`, `delete`, `up`, `down`, `left`, `right`.
 **Example:** `PRESS enter`
 
 ### `HOTKEY <mod1> <mod2> ... <key>`
-Presses a combination of modifier keys and a final key simultaneously. Modifiers include `ctrl`, `shift`, `alt`, `gui`, `win`, `cmd`.
+Injects a combination of modifier keys and a final key simultaneously. Valid modifiers: `ctrl`, `shift`, `alt`, `gui`, `win`, `cmd`.
 **Example:** `HOTKEY ctrl alt delete`
-**Example:** `HOTKEY ctrl c`
 
 ### `CLICK <x_percent> <y_percent> [button]`
-Performs a mouse click at the given relative coordinates (0.0 to 1.0) using absolute (touch) positioning. The `button` argument is optional (defaults to 1 for left click). `1` = Left, `2` = Right.
-**Example:** `CLICK 0.5 0.5` (Left click center of screen)
-**Example:** `CLICK 0.1 0.9 2` (Right click near bottom left)
+Injects a mouse click event using absolute (touch) positioning, scaled by normalized relative coordinates (0.0 to 1.0). The `button` argument is optional (default: 1). `1` = Left, `2` = Right.
+**Example:** `CLICK 0.5 0.5`
