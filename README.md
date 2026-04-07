@@ -7,7 +7,8 @@ It provides a high-performance, unified interface for video capture (up to 1080p
 ## Key Features
 - **Unified SDK**: Control video and HID inputs through a single Python class.
 - **Cross-Platform**: Natively supports Windows (DirectShow), Linux (V4L2), and macOS (AVFoundation).
-- **Agent-Ready**: High-level semantic API (e.g., `sdk.type()`, `sdk.click_percent()`) optimized for AI agents like Gemini, Codex, and Claude.
+- **Agent-Ready**: High-level semantic API (e.g., `sdk.type()`, `sdk.click()`) optimized for AI agents like Gemini, Codex, and Claude.
+- **Macro Engine**: Built-in DSL for defining and executing complex, multi-step routines (see [MACROS.md](MACROS.md)).
 - **Reverse-Engineered**: Bypasses legacy proprietary protocols using standard HID and UVC interfaces.
 - **Self-Healing**: Automated target re-enumeration and status monitoring (Resolution, Signal Active, Keyboard LEDs).
 
