@@ -12,7 +12,7 @@ from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 class TestEpiphanKVM_Enhanced:
     """
     Enhanced Test Suite for the AgentKVM2USB SDK.
-    Validates: Motion Detection, SRT Generation, Preset Management, and Config Persistence.
+    Validates: Motion Detection, SRT Generation, Preset Management, Macro DSL, and Config Persistence.
     """
 
     @pytest.fixture(scope="function")
@@ -74,7 +74,49 @@ class TestEpiphanKVM_Enhanced:
         # Verify status text area is not black anymore
         assert np.any(processed[1080-20, :]) 
 
-    # --- 2. PRESET & CONFIG PERSISTENCE ---
+    # --- 2. SEMANTIC AGENT ACTIONS & MACROS ---
+
+    def test_run_macro(self, sdk, mocker):
+        """Validates the HID Macro DSL parsing and execution."""
+        spy_delay = mocker.spy(time, 'sleep')
+        spy_type = mocker.spy(sdk, 'type')
+        spy_press = mocker.spy(sdk, 'press')
+        spy_hotkey = mocker.spy(sdk, 'hotkey')
+        spy_click = mocker.spy(sdk, 'click')
+
+        macro_script = """
+        # This is a comment
+        DELAY 100
+        TYPE hello
+        PRESS enter
+        HOTKEY ctrl alt delete
+        CLICK 0.5 0.5 2
+        """
+
+        sdk.run_macro(macro_script)
+
+        assert spy_delay.called
+        assert spy_delay.call_args_list[0][0][0] == 0.1  # 100 ms = 0.1 seconds
+
+        assert spy_type.called
+        assert spy_type.call_args_list[0][0][0] == "hello"
+
+        # `type` internally calls `press` for each character it can't map
+        # But we want to assert that our macro explicitly called press for "enter"
+        press_calls = [call[0][0] for call in spy_press.call_args_list]
+        assert "enter" in press_calls
+
+        assert spy_hotkey.called
+        assert spy_hotkey.call_args_list[0][0] == ("ctrl", "alt", "delete")
+
+        assert spy_click.called
+        assert spy_click.call_args_list[0][0] == (0.5, 0.5, 2)
+
+        # Test error handling (should not crash)
+        sdk.run_macro("INVALID_CMD")
+        sdk.run_macro("CLICK 0.5") # Missing Y
+
+    # --- 3. PRESET & CONFIG PERSISTENCE ---
 
     def test_preset_saving_loading(self, sdk):
         """Validates custom user presets are saved and merged correctly."""
@@ -106,7 +148,7 @@ class TestEpiphanKVM_Enhanced:
             data = json.load(f)
             assert data["startup_preset"] == "VGA Legacy"
 
-    # --- 3. INTEGRATED SDK TESTS ---
+    # --- 4. INTEGRATED SDK TESTS ---
 
     def test_apply_preset_effect(self, sdk):
         """Verifies that apply_preset correctly updates the internal detector state."""

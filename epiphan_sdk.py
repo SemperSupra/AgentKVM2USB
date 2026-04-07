@@ -363,6 +363,51 @@ class EpiphanKVM_SDK:
             elif a in self.KEY_MAP: keys.append(self.KEY_MAP[a])
         self._raw_kb(mods, keys); time.sleep(0.05); self._raw_kb(0, [0])
 
+    def run_macro(self, macro_script: str):
+        """
+        Executes a sequence of commands defined in a Domain Specific Language (DSL).
+        Available commands:
+        - DELAY <ms>: Pauses execution.
+        - TYPE <string>: Types literal text.
+        - PRESS <key>: Presses a single key.
+        - HOTKEY <mod1> <mod2> <key>: Presses a key combination.
+        - CLICK <x_percent> <y_percent> [button]: Performs a mouse click.
+        """
+        lines = macro_script.strip().splitlines()
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            parts = line.split(" ", 1)
+            cmd = parts[0].upper()
+            args = parts[1] if len(parts) > 1 else ""
+
+            try:
+                if cmd == "DELAY":
+                    ms = int(args.strip())
+                    time.sleep(ms / 1000.0)
+                elif cmd == "TYPE":
+                    self.type(args)
+                elif cmd == "PRESS":
+                    self.press(args.strip())
+                elif cmd == "HOTKEY":
+                    keys = [k.strip() for k in args.split()]
+                    self.hotkey(*keys)
+                elif cmd == "CLICK":
+                    click_args = [arg.strip() for arg in args.split()]
+                    if len(click_args) >= 2:
+                        x = float(click_args[0])
+                        y = float(click_args[1])
+                        button = int(click_args[2]) if len(click_args) > 2 else 1
+                        self.click(x, y, button)
+                    else:
+                        print(f"[SDK] Macro Error at line {line_num}: CLICK requires at least x_percent and y_percent")
+                else:
+                    print(f"[SDK] Macro Error at line {line_num}: Unknown command '{cmd}'")
+            except Exception as e:
+                print(f"[SDK] Macro Error at line {line_num}: Exception executing '{line}': {e}")
+
     def get_screen(self, prefix="capture", overlay=True):
         filename = self._generate_filename(prefix, "jpg")
         with self._lock:
