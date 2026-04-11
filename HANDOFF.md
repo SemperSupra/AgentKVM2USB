@@ -1,55 +1,57 @@
-# AgentKVM2USB Handoff - Session: April 5, 2026
+# AgentKVM2USB Handoff - Session: April 6, 2026
 
 ## 🟢 Status & Completed Features
 
-### 1. Vision & Frame Processing (Ported from AgentWebCam)
-- **`frame_processor.py`**: A new modular engine for real-time video enhancements.
-- **Motion Detection**: Implemented a weighted-average background model that identifies movement and provides bounding box coordinates.
-- **HUD Overlays**: Professional semi-transparent "Heads-Up Display" with high-precision timestamps, custom status text, and a "MOTION" alert dot.
-- **SRT Generation**: Automated sidecar `.srt` file creation during recording, perfectly synchronized with motion events.
+### 1. Vision & Frame Processing (Enhanced)
+- **Modular Engine**: `frame_processor.py` provides real-time video enhancements, motion detection, and HUD overlays.
+- **SRT Syncing**: Sidecar `.srt` files are generated during recordings to log motion events with sub-second accuracy.
+- **Toolbar Sensitivity**: Added a "⚡ Sens" quick-toggle to the main toolbar to cycle between Low, Med, and High motion sensitivity.
 
-### 2. Settings & Preset System
-- **Persistence**: 
-  - `user_presets.json`: Stores custom user profiles.
-  - `config.json`: Stores general app settings (e.g., the preferred startup preset).
-- **Settings Dialog**: A new tabbed interface for:
-  - Tuning motion sensitivity (Threshold/Area).
-  - Hardware UVC controls (Brightness/Contrast/Saturation).
-  - Preset Management: Save Current, Load, and Delete.
-- **Auto-Load**: Capability to mark any preset as the "Startup Preset" for automatic application on launch.
+### 2. Device-Aware Persistence
+- **Per-Device Preset Memory**: The app now remembers which preset (e.g., "VGA Legacy") was last used for a specific hardware device (e.g., "KVM2USB 3.0") using `config.json`.
+- **Automatic Application**: Switching cameras now triggers an immediate, relevant preset load without user intervention.
 
-### 3. Hardware Discovery Fixes
-- **`pygrabber` Integration**: Resolved "wrong camera selection" on Windows by using the DirectShow Filter Graph to map names to indices accurately.
-- **Robust Detection**: Improved KVM recognition using a combination of name-matching and resolution verification (1920x1080).
+### 3. HID Automation & Macros
+- **Macro DSL**: Implemented `run_macro` in the SDK to execute Domain Specific Language (DSL) scripts (e.g., `DELAY 500 | TYPE hello | PRESS enter`).
+- **Macro Editor GUI**: A new tab in the Settings dialog allows users to write, test, and execute macros against the live hardware.
+- **Robust Performance Mode**: Refactored `set_performance_mode` to reliably switch between MJPG and YUY2 by restarting the capture stream, ensuring high frame rates on demand.
 
-### 4. Validation
-- **`test_sdk.py`**: A comprehensive test suite covering motion logic, SRT formatting, preset merging, and config persistence. All 7 tests currently **PASS**.
+### 4. Session & Log Management
+- **Cleanup Tool**: Added "Cleanup Old Session Data" to the File menu, allowing users to safely delete snapshots, logs, and recordings older than 7 days.
+- **Unified Logging**: Improved session event logging to include hardware-level re-enumeration and OSD status updates.
+
+### 5. Validation
+- **`test_sdk.py`**: Expanded to 8 tests covering the new Macro DSL, Motion Detection logic, SRT generation, and Preset Persistence. All **PASS**.
+- **Mock Testing**: Verified per-device memory and cleanup logic using specialized mock scripts.
 
 ---
 
 ## 🟡 Pending Work & Next Steps
 
-### 1. Per-Device Preset Memory
-- **Goal**: Currently, presets are global. We need to update the logic so the app remembers which preset was used for "KVM2USB 3.0" vs. "Integrated Webcam".
+### 1. Vision-Conditional Macros (DSL Extension)
+- **Goal**: Make macros "aware" of the screen state.
 - **Tasks**:
-  - Update `config.json` to store a `device_mappings` dictionary.
-  - Modify `switch_camera` in `epiphan_sdk.py` to auto-apply the last-known preset for the new device name.
+  - Extend DSL with `WAIT_FOR_MOTION`, `WAIT_FOR_SIGNAL`, and `WAIT_FOR_NO_MOTION`.
+  - Implement feedback-loop automation where a macro waits for a reboot to finish before typing a password.
 
-### 2. GUI Refinements
-- **Toolbar Quick-Access**: Add a motion sensitivity slider or "High/Low" toggle directly to the main toolbar.
-- **Performance Mode**: Fully implement the MJPG vs. YUY2 switch logic in the SDK background thread to optimize frame rates on lower-end CPUs.
+### 2. Named Macro Library
+- **Goal**: Allow users to save their DSL scripts with names (e.g., "Reset to BIOS").
+- **Tasks**:
+  - Add a persistent gallery in the Macro Editor to store and recall common sequences.
 
-### 3. Log Management
-- **Cleanup**: Add a tool to archive or delete old snapshots and session recordings directly from the GUI.
+### 3. Remote Control API (Headless Mode)
+- **Goal**: Enable cloud-based AI agents to control the hardware.
+- **Tasks**:
+  - Implement a FastAPI or WebSocket wrapper to expose the SDK's core functions (frame capture and macro execution) over the network.
 
 ---
 
 ## 🛠️ Environment Note
-- **New Dependency**: `pygrabber` (added to `requirements.txt`).
+- **Dependencies**: `pygrabber`, `PySide6`, `opencv-python`, `hidapi`.
 - **Files Created/Modified**:
-  - `frame_processor.py` (New)
-  - `settings_dialog.py` (New)
-  - `epiphan_sdk.py` (Updated)
-  - `kvmapp_gui.py` (Updated)
-  - `test_sdk.py` (Updated)
-  - `requirements.txt` (Updated)
+  - `epiphan_sdk.py` (Updated: Per-device logic, Macro DSL, Cleanup)
+  - `kvmapp_gui.py` (Updated: Toolbar, Cleanup menu, Camera naming)
+  - `settings_dialog.py` (Updated: Macro Editor tab, UI refinements)
+  - `test_sdk.py` (Updated: Enhanced test suite)
+  - `BACKLOG.md` (Updated: Agent-Ready feature pipeline)
+  - `config.json` (New: Persistent device mappings)

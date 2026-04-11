@@ -508,11 +508,51 @@ class EpiphanKVM_SDK:
         except: self.kb_dev.write(r)
 
     def set_performance_mode(self, enabled):
+        """Toggles between MJPG (compressed) and YUY2 (uncompressed) modes."""
         with self._lock:
-            if not self.cap: return
+            if not self.cap or not self.cap.isOpened():
+                return
+
+            # Identify current camera state
+            current_index = 0
+            # We don't store the index directly, but we can infer it or just use the current camera name
+            # Actually, switch_camera already handles index and name. 
+            # Let's find the current index by re-scanning if needed, or store it.
+
+            # Better: set_performance_mode should just update a flag and then 
+            # we trigger a re-initialization of the capture.
+
+            self.performance_mode_enabled = enabled
             code = cv2.VideoWriter_fourcc(*'MJPG') if enabled else cv2.VideoWriter_fourcc(*'YUY2')
+
+            # Attempt to set it directly first (some backends allow this)
             self.cap.set(cv2.CAP_PROP_FOURCC, code)
 
+            # Verify if it worked (OpenCV 4+ often ignores this)
+            actual_code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            if actual_code != code:
+                # If direct set failed, we MUST restart the capture
+                # But we don't want to lose the stream in the GUI
+                # So we'll just flag it for the next switch_camera or 
+                # do a quick restart if a camera is active.
+                if self.current_camera_name:
+                    # Find index from name
+                    cameras = self.list_available_cameras()
+                    target_idx = -1
+                    for idx, name in cameras:
+                        if name == self.current_camera_name:
+                            target_idx = idx; break
+
+                    if target_idx != -1:
+                        # We release and reopen
+                        self.cap.release()
+                        backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+                        self.cap = cv2.VideoCapture(target_idx, backend)
+                        self.cap.set(cv2.CAP_PROP_FOURCC, code)
+                        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                        return True
+            return False
     def set_camera_property(self, prop_name, value):
         """Sets an OpenCV camera property (e.g., brightness, contrast)."""
         prop_map = {
