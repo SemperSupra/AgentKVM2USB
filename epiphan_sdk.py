@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from frame_processor import MotionDetector, OverlayManager, SRTGenerator
 
+VERSION = "0.2.0"
+
 class EpiphanKVM_SDK:
     """
     Universal, Agent-Ready SDK for Epiphan KVM2USB 3.0.
