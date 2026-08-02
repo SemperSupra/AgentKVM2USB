@@ -1,0 +1,76 @@
+{
+  "id": "AgentKVM2USB",
+  "name": "AgentKVM2USB",
+  "channel": "public",
+  "repository": "SemperSupra/AgentKVM2USB",
+  "release": {
+    "strategy": "github-latest-release",
+    "tagPattern": "v*",
+    "assetPatterns": {
+      "portableZip": "AgentKVM2USB-v*-windows-portable.zip",
+      "sha256": "AgentKVM2USB-v*-windows-portable.zip.sha256"
+    }
+  },
+  "artifact": {
+    "type": "portable-zip",
+    "entryPoint": "Run-AgentKVM2USB.cmd",
+    "dependencyBootstrap": "Install-Dependencies.cmd",
+    "requiresPython": true,
+    "requiresHardware": "Epiphan KVM2USB 3.0"
+  },
+  "targets": {
+    "scoop": {
+      "enabled": true,
+      "type": "portable",
+      "bin": [
+        [
+          "Run-AgentKVM2USB.cmd",
+          "AgentKVM2USB"
+        ]
+      ],
+      "requiresDependencyBootstrap": true
+    },
+    "chocolatey": {
+      "enabled": true,
+      "type": "portable",
+      "requiresDependencyBootstrap": true
+    },
+    "wingetLocal": {
+      "enabled": true,
+      "installerType": "zip",
+      "nestedInstallerType": "portable",
+      "nestedInstallerFiles": [
+        {
+          "relativeFilePath": "Run-AgentKVM2USB.cmd",
+          "portableCommandAlias": "AgentKVM2USB"
+        }
+      ],
+      "requiresDependencyBootstrap": true
+    },
+    "wingetOfficial": false,
+    "portableApps": false
+  },
+  "publication": {
+    "scoopOfficial": false,
+    "chocolateyCommunity": false,
+    "wingetOfficial": false,
+    "portableApps": false
+  },
+  "commands": {
+    "build": "py -3 scripts/build_portable.py",
+    "release": "py -3 scripts/release.py --tag v0.2.0"
+  },
+  "artifacts": [
+    "dist/AgentKVM2USB-v*-windows-portable.zip",
+    "dist/AgentKVM2USB-v*-windows-portable.zip.sha256"
+  ],
+  "installNotes": [
+    "Install a current 64-bit Python 3 distribution.",
+    "Run Install-Dependencies.cmd once after extraction while internet access is available.",
+    "Full functionality requires an attached Epiphan KVM2USB 3.0 with Windows UVC and HID access."
+  ],
+  "uninstallNotes": [
+    "Delete the extracted application directory, including its local .venv directory.",
+    "No system service, driver, or official package-manager registration is installed by the portable archive."
+  ]
+}
