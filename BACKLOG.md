@@ -2,11 +2,26 @@
 
 This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap) for implementation.
 
+## Device Investigation Priorities
+- [x] **Live Mode HID Report:** Map the observed KVM2USB 3.0 live mode report. Usage `0x103`, feature report `3`, returns `width_le16`, `height_le16`, and an active flag. Verified with `1920x1080 active`.
+- [x] **Structured Hardware Probe v2:** Extend `hardware_probe.py` to emit HID collection metadata, status source, UVC ownership/open state, frame statistics, and effective signal inference in one JSON document.
+- [x] **Initial UVC / DirectShow Capability Map:** Enumerate supported formats, resolutions, frame rates, actual backend, FOURCC, and camera-open failure cases. Prefer stable camera selection by device name over index. See `VIDEO_PIPELINE.md`.
+- [ ] **UVC / DirectShow Follow-Up:** Confirm whether the advertised mode list changes with different target resolutions, adapter chains, or USB host ports.
+- [x] **HID Report Map:** Recover KVM2USB 3.0 keyboard, mouse, touch, live-size, touch-type, and re-enumerate report IDs/lengths from Linux vendor-app disassembly. SDK keyboard/touch framing now follows the vendor report IDs with legacy fallbacks. Keep live write-path validation deferred until a human approves a hardware-safe target session.
+- [x] **Recovered Capability Matrix:** Document recovered app, driver, firmware, HID, and config-interface features in `RECOVERED_CAPABILITIES.md`.
+- [ ] **MI_00 Config Interface Probe:** After explicit approval for host driver changes, bind the official WinUSB config driver for `VID_2B77&PID_3661&MI_00` and build a read-only probe around interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`.
+- [x] **Vendor Config Request Map:** Static disassembly confirms config requests `0xB2`, `0xB3`, `0xE2`, `0xE3`, and update/EDID requests including `0xA0`, `0xC4`, `0xC5`, and `0xD4`. `InputStatusInfo`, `UserMode`, and device flag payloads are mapped well enough for offline parsing/building. Next step is USBPcap confirmation of read-only official-tool actions before implementing a live probe.
+- [x] **FX3 Firmware Container Parser:** Add offline Cypress FX3 `.img` parsing, checksum validation, entry address recovery, and request `0xA0` chunk planning. See `FIRMWARE_UPDATE_RECOVERY.md`.
+- [ ] **FPGA Bitstream Packet Decoder:** Decode `kvm2usb3.bin` after the Xilinx sync word at offset `0x10`, including packet headers, CRC command, and end/desync sequence.
+- [ ] **Signal Health Model:** Distinguish HID-reported signal, UVC stream-open state, latest-frame presence, blank-frame detection, and stale-frame detection in SDK/GUI status.
+- [ ] **Harmless HID Injection Validation:** Validate keyboard, mouse, touch, touch-type, re-enumerate, and macro behavior against safe firmware screens or a sacrificial OS session. Prefer `sdk.run_macro()` for sequences.
+
 ## High-Risk / Low-Priority
-- [ ] **Custom Firmware Flasher:** Reverse engineer `bRequest` vendor codes for writing to FX3/FPGA flash.
-- [ ] **Custom EDID Injector:** Implement raw I2C/EEPROM writes via USB Control Endpoint 0 to set custom monitor profiles.
+- [ ] **Custom Firmware Flasher:** Reverse engineer and validate firmware/update flows. Static analysis has identified request IDs, but implementation remains deferred high-risk work.
+- [ ] **Custom Firmware Builder:** Define a reproducible offline build/sign/checksum pipeline for custom FX3 images before any live updater exists.
+- [ ] **Custom FPGA Builder:** Identify FPGA family/toolchain constraints and bitstream compatibility before any live FPGA update support exists.
+- [ ] **Custom EDID Injector:** Implement raw EDID writes only after read-only EDID extraction and a hardware-safe write/rollback plan are approved. Current `0xA0` evidence is chunked write/read-verify update machinery, not a safe live EDID read API.
 - [ ] **Signal Diagnostics:** Extract raw VGA/DVI sync timing parameters (H-Sync, V-Sync, Phase) programmatically.
-- [ ] **Signal Path Validation:** Resolve cases where HID/UVC enumeration works but `get_status()` reports `0x0` and the captured UVC frame is black.
 
 ## Automation States
 - [ ] **State Detection Templates:** Pre-captured images of the Spartan-6 / FX3 boot screens for automated state detection.
@@ -19,7 +34,7 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [ ] **Multi-KVM Dashboard:** Support a grid-view mode for users with 2-4 devices connected to a single host.
 
 ## Testability and Repository Hygiene
-- [ ] **Structured Hardware Probe:** Add a script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, and sample capture path.
+- [ ] **Structured Hardware Probe:** Keep expanding the script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, frame statistics, and sample capture path.
 - [ ] **Structured Macro Results:** Return parse/runtime errors from `run_macro()` instead of only printing them.
 - [ ] **Configurable Session Output Root:** Allow lab automation to override the default `runtime_sessions/` root.
 - [ ] **Persistent Profile Store:** Decide whether non-secret user presets should remain per-run or be promoted to a user profile directory outside the repository.

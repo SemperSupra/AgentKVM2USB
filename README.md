@@ -73,6 +73,10 @@ sdk.close()
 - `test_sdk.py`: Test suite (supports hardware & mock testing).
 - `PROJECT_STATUS.md`: Current triage, validation results, known gaps, and phased remediation strategy.
 - `HARDWARE_REPORT.md`: Reverse-engineering documentation and component analysis.
+- `VIDEO_PIPELINE.md`: Current physical, HID, UVC, DirectShow, and OpenCV video pipeline findings.
+- `VENDOR_ARTIFACTS.md`: Official Epiphan download inventory, hashes, extracted package notes, and reverse-engineering leads.
+- `RECOVERED_CAPABILITIES.md`: App, driver, firmware, HID, and config-interface capability matrix recovered from official artifacts.
+- `FIRMWARE_UPDATE_RECOVERY.md`: Offline firmware, FPGA, update-container, checksum, and transfer-plan recovery notes.
 - `BACKLOG.md`: Development roadmap and protocol research notes.
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
 - `MACROS.md`: Documentation for the Macro Engine DSL.

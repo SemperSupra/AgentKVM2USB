@@ -38,6 +38,17 @@ class EpiphanKVM_SDK:
     }
     MOD_MAP = {"ctrl": 0x01, "shift": 0x02, "alt": 0x04, "gui": 0x08, "win": 0x08, "cmd": 0x08}
 
+    HID_REPORT_KEYBOARD = 0x01
+    HID_REPORT_MOUSE = 0x02
+    HID_REPORT_INPUT_SIZE = 0x03
+    HID_REPORT_TOUCH = 0x05
+    HID_REPORT_TOUCH_TYPE = 0x06
+    HID_REPORT_REENUMERATE_SLAVE = 0x07
+
+    CONFIG_FLAG_PRESERVE_ASPECT_RATIO = 0x02
+    CONFIG_FLAG_PERFORMANCE_MODE = 0x04
+    CONFIG_FLAG_AUDIO_SELECTOR = 0x10
+
     PRESETS = {
         "Default": {
             "motion_threshold": 25, "motion_min_area": 500,
@@ -66,6 +77,8 @@ class EpiphanKVM_SDK:
         self.sys_dev = None
         self.cap = None
         self.latest_frame = None
+        self.latest_frame_seq = 0
+        self.latest_frame_at = None
         self.current_camera_name = None
         self._stop_video = False
         self.last_action_text = ""
@@ -332,6 +345,8 @@ class EpiphanKVM_SDK:
                         ret, f = self.cap.read()
                         if ret:
                             self.latest_frame = f
+                            self.latest_frame_seq += 1
+                            self.latest_frame_at = time.time()
                             if self.enable_motion_detection:
                                 self.is_motion_detected, self.motion_locs = self.motion_detector.detect(f)
                         else:
@@ -364,9 +379,9 @@ class EpiphanKVM_SDK:
         self._log_event("MOUSE_CLICK", f"{x_percent:.2f},{y_percent:.2f} btn={button}")
         if not self.touch_dev: return
         x = int(x_percent * 32767); y = int(y_percent * 32767)
-        report = [button & 0xFF, x & 0xFF, (x >> 8) & 0xFF, y & 0xFF, (y >> 8) & 0xFF]
-        self.touch_dev.write([0x00] + report)
-        time.sleep(0.1); self.touch_dev.write([0x00, 0, 0, 0, 0, 0])
+        self._raw_touch(button & 0xFF, x, y)
+        time.sleep(0.1)
+        self._raw_touch(0, x, y)
 
     def type(self, text):
         self._log_event("KEYBOARD_TYPE", text)
@@ -501,17 +516,63 @@ class EpiphanKVM_SDK:
     # --- DIAGNOSTICS ---
 
     def get_status(self):
-        w, h = self.get_input_resolution()
+        signal = self.get_input_signal()
+        w, h = signal["width"], signal["height"]
         l = self.get_led_status()
-        return {"resolution": f"{w}x{h}", "is_signal_active": w > 0, "leds": l}
+        return {
+            "resolution": f"{w}x{h}",
+            "is_signal_active": signal["is_active"],
+            "leds": l,
+            "signal_source": signal["source"],
+            "firmware_version": self.get_firmware_version(),
+        }
+
+    def get_firmware_version(self):
+        # Official KvmApp reads USB string descriptor index 3 via hidapi.
+        for dev in (self.kb_dev, self.mouse_dev, self.touch_dev, self.sys_dev):
+            if not dev or not hasattr(dev, "get_indexed_string"):
+                continue
+            try:
+                value = dev.get_indexed_string(3)
+                if value:
+                    return value.strip()
+            except Exception:
+                continue
+        return None
 
     def get_input_resolution(self):
-        if not self.sys_dev: return (0, 0)
+        signal = self.get_input_signal()
+        return (signal["width"], signal["height"])
+
+    def get_input_signal(self):
+        # KVM2USB 3.0 exposes live input mode on the touch HID collection:
+        # report 3 => width_le16, height_le16, active_flag.
+        signal = self._read_mode_report(self.touch_dev, self.HID_REPORT_INPUT_SIZE, 8, 0, "touch_feature_3")
+        if signal:
+            return signal
+
+        # Older reverse-engineering assumed a system collection report with a
+        # leading report byte. Keep it as a fallback for other firmware builds.
+        signal = self._read_mode_report(self.sys_dev, 0, 9, 1, "system_feature_0")
+        if signal:
+            return signal
+
+        return {"width": 0, "height": 0, "is_active": False, "source": None}
+
+    def _read_mode_report(self, dev, report_id, length, offset, source):
+        if not dev:
+            return None
         try:
-            d = self.sys_dev.get_feature_report(0, 9)
-            if len(d) >= 5: return (d[1] | (d[2] << 8), d[3] | (d[4] << 8))
+            d = dev.get_feature_report(report_id, length)
+            if len(d) < offset + 4:
+                return None
+            w = d[offset] | (d[offset + 1] << 8)
+            h = d[offset + 2] | (d[offset + 3] << 8)
+            active = bool(d[offset + 4]) if len(d) > offset + 4 else w > 0
+            if w > 0 and h > 0:
+                return {"width": w, "height": h, "is_active": active, "source": source}
         except: pass
-        return (0, 0)
+        return None
 
     def get_led_status(self):
         if not self.kb_dev: return {"caps": False, "num": False, "scroll": False}
@@ -526,16 +587,150 @@ class EpiphanKVM_SDK:
     def reenumerate_target(self):
         if not self.sys_dev: return
         self._log_event("SYSTEM", "Re-enumerating target")
-        try: self.sys_dev.write([0x00, 0x01] + [0x00]*7)
-        except: pass
+        self._send_feature_report(self.sys_dev, [self.HID_REPORT_REENUMERATE_SLAVE, 0x00])
         time.sleep(2)
+
+    def set_touch_type(self, touch_type):
+        """Sets the device touch-report mode using the vendor app's feature report."""
+        if not self.sys_dev:
+            return False
+        return self._send_feature_report(self.sys_dev, [self.HID_REPORT_TOUCH_TYPE, int(touch_type) & 0xFF])
 
     def _raw_kb(self, mods, keys):
         if not self.kb_dev: return
         r = [0x00]*8; r[0] = mods
         for i, k in enumerate(keys[:6]): r[2+i] = k
-        try: self.kb_dev.write([0x00] + r)
-        except: self.kb_dev.write(r)
+        self._write_hid_report(self.kb_dev, [self.HID_REPORT_KEYBOARD] + r, r)
+
+    def _raw_touch(self, flags, x, y):
+        if not self.touch_dev:
+            return
+        flags = (flags | 0x02) & 0xFF
+        report = [
+            self.HID_REPORT_TOUCH,
+            flags,
+            x & 0xFF,
+            (x >> 8) & 0xFF,
+            y & 0xFF,
+            (y >> 8) & 0xFF,
+            0x00,
+        ]
+        self._write_hid_report(self.touch_dev, report, report[1:-1])
+
+    def _write_hid_report(self, dev, report, legacy_report=None):
+        try:
+            return dev.write(report)
+        except Exception:
+            if legacy_report is None:
+                return None
+            try:
+                return dev.write(legacy_report)
+            except Exception:
+                return None
+
+    def _send_feature_report(self, dev, report):
+        if not dev:
+            return False
+        try:
+            result = dev.send_feature_report(report)
+            return result is None or result >= 0
+        except AttributeError:
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def parse_config_input_status(payload):
+        """Parses recovered MI_00 request 0xB2 InputStatusInfo bytes."""
+        if payload is None or len(payload) < 29:
+            return None
+
+        def ascii_z(start, end):
+            raw = bytes(payload[start:end]).split(b"\x00", 1)[0]
+            return raw.decode("ascii", errors="ignore") or None
+
+        source = ascii_z(0, 12)
+        mode_name = ascii_z(12, 20) or "unknown"
+        refresh_hz = int.from_bytes(bytes(payload[20:24]), "little") / 1000.0
+        width = int.from_bytes(bytes(payload[24:26]), "little")
+        height = int.from_bytes(bytes(payload[26:28]), "little")
+        progressive = bool(payload[28])
+        active = width > 0 and height > 0 and refresh_hz > 0
+
+        return {
+            "source": source,
+            "mode_name": mode_name,
+            "width": width,
+            "height": height,
+            "refresh_hz": refresh_hz,
+            "scan_mode": "p" if progressive else "i",
+            "is_signal_active": active,
+            "label": f"{source or 'unknown'} {width}x{height}{'p' if progressive else 'i'}@{refresh_hz:g}, {mode_name}" if active else "no signal",
+        }
+
+    @classmethod
+    def parse_config_flags(cls, flags):
+        """Parses recovered MI_00 requests 0xE2/0xE3 device flag byte."""
+        if flags is None:
+            return None
+        if isinstance(flags, (bytes, bytearray, list, tuple)):
+            if not flags:
+                return None
+            flags = flags[0]
+        flags = int(flags) & 0xFF
+        known = (
+            cls.CONFIG_FLAG_PRESERVE_ASPECT_RATIO
+            | cls.CONFIG_FLAG_PERFORMANCE_MODE
+            | cls.CONFIG_FLAG_AUDIO_SELECTOR
+        )
+        return {
+            "raw": flags,
+            "preserve_aspect_ratio": bool(flags & cls.CONFIG_FLAG_PRESERVE_ASPECT_RATIO),
+            "performance_mode": bool(flags & cls.CONFIG_FLAG_PERFORMANCE_MODE),
+            "audio_selector_multichannel": bool(flags & cls.CONFIG_FLAG_AUDIO_SELECTOR),
+            "unknown_bits": flags & ~known,
+        }
+
+    @classmethod
+    def build_config_flags(cls, preserve_aspect_ratio=False, performance_mode=False, audio_selector_multichannel=False):
+        """Builds the recovered MI_00 request 0xE3 device flag byte."""
+        flags = 0
+        if preserve_aspect_ratio:
+            flags |= cls.CONFIG_FLAG_PRESERVE_ASPECT_RATIO
+        if performance_mode:
+            flags |= cls.CONFIG_FLAG_PERFORMANCE_MODE
+        if audio_selector_multichannel:
+            flags |= cls.CONFIG_FLAG_AUDIO_SELECTOR
+        return flags
+
+    @staticmethod
+    def parse_config_user_mode(payload):
+        """Parses one recovered MI_00 request 0xB3 UserMode record."""
+        if payload is None or len(payload) < 5:
+            return None
+        width = int.from_bytes(bytes(payload[0:2]), "little")
+        height = int.from_bytes(bytes(payload[2:4]), "little")
+        disabled = bool(payload[4])
+        return {
+            "width": width,
+            "height": height,
+            "enabled": not disabled,
+            "disabled_byte": int(payload[4]) & 0xFF,
+        }
+
+    @staticmethod
+    def build_config_user_mode(width, height, enabled=True):
+        """Builds one recovered MI_00 request 0xB3 UserMode record."""
+        width = min(max(int(width), 0), 0xFFFF)
+        height = min(max(int(height), 0), 0xFFFF)
+        disabled = 0 if enabled else 1
+        return [
+            width & 0xFF,
+            (width >> 8) & 0xFF,
+            height & 0xFF,
+            (height >> 8) & 0xFF,
+            disabled,
+        ]
 
     def set_performance_mode(self, enabled):
         """Toggles between MJPG (compressed) and YUY2 (uncompressed) modes."""
