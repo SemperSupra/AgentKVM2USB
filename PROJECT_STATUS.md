@@ -23,7 +23,7 @@ Release `v0.2.0` has these install assets:
 Current SHA256:
 
 ```text
-e6817fd8736a48955dcc26bda949c9cb97319f756f98c2095531972681a99757  AgentKVM2USB-v0.2.0-windows-portable.zip
+360ff91a7c4b76d90b5d115ceea379b4f8c8568e67c54c36f7c37a8ff413a3c1  AgentKVM2USB-v0.2.0-windows-portable.zip
 ```
 
 ## Hardware Validation
@@ -42,7 +42,30 @@ Observed:
 - Captured frame was black.
 - `get_status()` reported `resolution: 0x0` and `is_signal_active: false`.
 
-Interpretation: USB/HID/UVC enumeration works on the host. The blue LED supports that the host USB 3.0 link is healthy. The target video signal path still needs follow-up because the camera stream is available but no active signal is reported by the system endpoint and the captured frame is black.
+Two KVM2USB 3.0 units showed the same result. Interpretation: USB/HID/UVC enumeration works on the host. The blue LED supports that the host USB 3.0 link is healthy. The target video signal path still needs follow-up because the camera stream is available but no active signal is reported by the system endpoint and the captured frame is black.
+
+Current Wyse video path:
+
+```text
+Wyse DisplayPort
+-> DP to HDMI adapter
+-> HDMI cable
+-> HDMI to DVI adapter
+-> Epiphan KVM cable
+-> KVM2USB
+```
+
+Leading diagnosis: the target video signal is not negotiating through this multi-adapter chain. Prefer a single active DisplayPort-to-DVI-D conversion.
+
+Likely adapter/cable choices:
+
+- StarTech `DP2DVIMM6BS`: active DP male to DVI-D male cable. Best physical fit for the Epiphan KVM cable's female DVI end.
+- StarTech `DP2DVIS`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
+- Cable Matters `102022`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
+- Accell UltraAV `B087B-005B-2`: active DP to DVI-D single-link adapter. Confirm connector gender.
+- Club 3D `CAC-1010`: active DP to dual-link DVI-D. Confirm connector gender.
+
+Avoid passive DP-to-DVI unless the Wyse port is known to support DP++, and avoid DP-to-HDMI plus HDMI-to-DVI chains.
 
 ## UI/UX Review
 
