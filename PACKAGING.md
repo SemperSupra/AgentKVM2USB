@@ -12,7 +12,7 @@ The build copies all top-level Python utilities, `requirements.txt`, `config.jso
 and the user-facing Markdown documentation. It also generates:
 
 - `Install-Dependencies.ps1` and `.cmd` to create a local `.venv` and install the
-  pinned-by-repository dependency set.
+  repository dependency set.
 - `Run-AgentKVM2USB.ps1` and `.cmd` to launch `kvmapp_gui.py` from that environment.
 - `PORTABLE-README.md` with end-user installation, hardware, integrity, and
   uninstall guidance.
