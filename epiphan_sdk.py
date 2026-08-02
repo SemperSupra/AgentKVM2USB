@@ -4,7 +4,6 @@ import cv2
 import threading
 import os
 import platform
-import subprocess
 import datetime
 import json
 import numpy as np
@@ -15,6 +14,7 @@ from pathlib import Path
 from frame_processor import MotionDetector, OverlayManager, SRTGenerator
 
 VERSION = "0.2.0"
+RUNTIME_SESSION_ROOT = "runtime_sessions"
 
 class EpiphanKVM_SDK:
     """
@@ -24,8 +24,16 @@ class EpiphanKVM_SDK:
     
     KEY_MAP = {
         "a": 0x04, "b": 0x05, "c": 0x06, "d": 0x07, "e": 0x08, "f": 0x09,
+        "g": 0x0A, "h": 0x0B, "i": 0x0C, "j": 0x0D, "k": 0x0E, "l": 0x0F,
+        "m": 0x10, "n": 0x11, "o": 0x12, "p": 0x13, "q": 0x14, "r": 0x15,
+        "s": 0x16, "t": 0x17, "u": 0x18, "v": 0x19, "w": 0x1A, "x": 0x1B,
+        "y": 0x1C, "z": 0x1D,
+        "1": 0x1E, "2": 0x1F, "3": 0x20, "4": 0x21, "5": 0x22,
+        "6": 0x23, "7": 0x24, "8": 0x25, "9": 0x26, "0": 0x27,
         "enter": 0x28, "esc": 0x29, "backspace": 0x2A, "tab": 0x2B, "space": 0x2C,
-        "f1": 0x3A, "f2": 0x3B, "f5": 0x3E, "f12": 0x45, "delete": 0x4C,
+        "f1": 0x3A, "f2": 0x3B, "f3": 0x3C, "f4": 0x3D, "f5": 0x3E,
+        "f6": 0x3F, "f7": 0x40, "f8": 0x41, "f9": 0x42, "f10": 0x43,
+        "f11": 0x44, "f12": 0x45, "delete": 0x4C,
         "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52
     }
     MOD_MAP = {"ctrl": 0x01, "shift": 0x02, "alt": 0x04, "gui": 0x08, "win": 0x08, "cmd": 0x08}
@@ -64,9 +72,14 @@ class EpiphanKVM_SDK:
         self.last_action_expiry = 0
         self._lock = threading.Lock()
         
-        # Paths
-        self.user_presets_path = "user_presets.json"
-        self.config_path = "config.json"
+        self.session_started_at = datetime.datetime.now(datetime.timezone.utc)
+        self.session_correlation_id = secrets.token_hex(4)
+        self.session_dir = self._create_runtime_session_dir()
+
+        # Per-run state paths. The repository root config.json is treated as a default seed only.
+        self.default_config_path = Path("config.json")
+        self.user_presets_path = self.session_dir / "user_presets.json"
+        self.config_path = self.session_dir / "config.json"
         
         # Session Data
         self.session_events = []
@@ -81,6 +94,7 @@ class EpiphanKVM_SDK:
         self.enable_overlays = True
         self.show_motion_boxes = False
         self.srt_generator = None
+        self._stop_recording = False
         
         self._load_all_presets()
         self._load_config()
@@ -90,11 +104,19 @@ class EpiphanKVM_SDK:
     def _load_config(self):
         """Loads general application configuration."""
         self.config = {"startup_preset": "Default", "device_mappings": {}}
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r") as f:
-                    self.config.update(json.load(f))
-            except: pass
+        for path in (self.default_config_path, self.config_path):
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        self.config.update(json.load(f))
+                except: pass
+
+    def _create_runtime_session_dir(self):
+        """Creates a per-run output directory for logs, captures, and recordings."""
+        timestamp = self.session_started_at.strftime("%Y%m%dT%H%M%SZ")
+        path = Path(RUNTIME_SESSION_ROOT) / f"{timestamp}-{self.session_correlation_id}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def save_config(self):
         """Saves current configuration to file."""
@@ -173,6 +195,10 @@ class EpiphanKVM_SDK:
             return f"{clean_prefix}_{ts}_{salt}.{extension}"
         return f"kvm_{ts}_{salt}.{extension}"
 
+    def _runtime_path(self, filename):
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        return self.session_dir / filename
+
     def _log_event(self, event_type, details):
         """Logs a time-aligned event if logging is enabled."""
         if not self.logging_enabled:
@@ -205,10 +231,10 @@ class EpiphanKVM_SDK:
         """Saves the event log to a JSON file if logging was enabled."""
         if not self.logging_enabled or not self.session_events:
             return None
-        filename = self._generate_filename(prefix, "json")
-        with open(filename, "w", encoding="utf-8") as f:
+        path = self._runtime_path(self._generate_filename(prefix, "json"))
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(self.session_events, f, indent=2)
-        return os.path.abspath(filename)
+        return str(path.resolve())
 
     # --- CORE HARDWARE LOGIC ---
 
@@ -333,6 +359,8 @@ class EpiphanKVM_SDK:
     # --- ACTIONS ---
 
     def click(self, x_percent, y_percent, button=1):
+        x_percent = min(max(float(x_percent), 0.0), 1.0)
+        y_percent = min(max(float(y_percent), 0.0), 1.0)
         self._log_event("MOUSE_CLICK", f"{x_percent:.2f},{y_percent:.2f} btn={button}")
         if not self.touch_dev: return
         x = int(x_percent * 32767); y = int(y_percent * 32767)
@@ -344,11 +372,6 @@ class EpiphanKVM_SDK:
         self._log_event("KEYBOARD_TYPE", text)
         for char in text.lower():
             if char in self.KEY_MAP: self.press(char)
-            elif 'a' <= char <= 'z':
-                code = ord(char) - ord('a') + 4
-                self._raw_kb(0, [code]); time.sleep(0.02); self._raw_kb(0, [0])
-            elif char == ' ':
-                self._raw_kb(0, [0x2C]); time.sleep(0.02); self._raw_kb(0, [0])
             time.sleep(0.05)
 
     def press(self, key_name):
@@ -411,7 +434,7 @@ class EpiphanKVM_SDK:
                 print(f"[SDK] Macro Error at line {line_num}: Exception executing '{line}': {e}")
 
     def get_screen(self, prefix="capture", overlay=True):
-        filename = self._generate_filename(prefix, "jpg")
+        path = self._runtime_path(self._generate_filename(prefix, "jpg"))
         with self._lock:
             if self.latest_frame is not None:
                 frame = self.latest_frame.copy()
@@ -421,29 +444,30 @@ class EpiphanKVM_SDK:
                     cv2.putText(frame, ts, (10, h-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1)
                     if time.time() < self.last_action_expiry:
                         cv2.putText(frame, self.last_action_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 1)
-                cv2.imwrite(filename, frame)
-                self._log_event("SNAPSHOT", filename)
-                return os.path.abspath(filename)
+                cv2.imwrite(str(path), frame)
+                self._log_event("SNAPSHOT", str(path))
+                return str(path.resolve())
         return None
 
     def record_session(self, duration_sec, prefix="session", generate_srt=True):
-        filename = self._generate_filename(prefix, "mp4")
-        srt_filename = filename.replace(".mp4", ".srt") if generate_srt else None
+        path = self._runtime_path(self._generate_filename(prefix, "mp4"))
+        srt_path = path.with_suffix(".srt") if generate_srt else None
+        self._stop_recording = False
         
         if not self.cap: return
         with self._lock:
             if self.latest_frame is None: return
             h, w = self.latest_frame.shape[:2]
         
-        out = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'mp4v'), 30.0, (w, h))
-        srt = SRTGenerator(srt_filename) if generate_srt else None
+        out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'mp4v'), 30.0, (w, h))
+        srt = SRTGenerator(str(srt_path)) if generate_srt else None
         
-        self._log_event("RECORDING_START", filename)
+        self._log_event("RECORDING_START", str(path))
         rec_start = time.time()
         last_motion_state = False
         motion_start_time = 0
         
-        while (time.time() - rec_start) < duration_sec:
+        while not self._stop_recording and (time.time() - rec_start) < duration_sec:
             # Use processed frame for recording if overlays are enabled
             frame = self.get_processed_frame()
             if frame is None: break
@@ -467,8 +491,12 @@ class EpiphanKVM_SDK:
         if last_motion_state and generate_srt:
             srt.add_entry(motion_start_time, time.time() - rec_start, "Motion Detected")
             
-        self._log_event("RECORDING_END", filename)
-        return os.path.abspath(filename)
+        self._log_event("RECORDING_END", str(path))
+        return str(path.resolve())
+
+    def stop_recording(self):
+        """Requests that the active recording loop stop at the next frame boundary."""
+        self._stop_recording = True
 
     # --- DIAGNOSTICS ---
 
@@ -575,20 +603,23 @@ class EpiphanKVM_SDK:
         now = time.time()
         cutoff = now - (days * 86400)
         
-        extensions = [".jpg", ".json", ".mp4", ".srt"]
-        # Pattern for files generated by the app: prefix_dateTtime_salt.ext
-        # We'll just look for files with these extensions that match the timestamp pattern
-        for f in os.listdir("."):
-            if any(f.endswith(ext) for ext in extensions):
-                path = os.path.join(".", f)
-                if os.path.getmtime(path) < cutoff:
-                    # Basic safety check: only delete if it looks like our file
-                    # (e.g. contains '202' for the decade 2020s)
-                    if "202" in f and ("_" in f or f.startswith("kvm_")):
-                        try:
-                            os.remove(path)
-                            count += 1
-                        except: pass
+        root = Path(RUNTIME_SESSION_ROOT)
+        if not root.exists():
+            return 0
+
+        for path in root.rglob("*"):
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                try:
+                    path.unlink()
+                    count += 1
+                except: pass
+
+        for path in sorted(root.rglob("*"), reverse=True):
+            if path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
         return count
 
     def close(self):

@@ -72,9 +72,14 @@ EpiphanTools/
 *.edid
 
 # Captured Media
+runtime_sessions/
 *.jpg
 *.png
 *.mp4
+*.srt
+kvm_*.json
+dev_*.json
+session_*.json
 !README_assets/
 
 # IDEs

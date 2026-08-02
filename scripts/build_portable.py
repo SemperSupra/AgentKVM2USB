@@ -28,6 +28,7 @@ RUNTIME_PYTHON_FILES = (
     "epiphan_sdk.py",
     "fpga_automation.py",
     "frame_processor.py",
+    "hardware_probe.py",
     "kvmapp_gui.py",
     "probe_hid.py",
     "settings_dialog.py",
@@ -37,6 +38,7 @@ ROOT_DOCUMENTS = (
     "AGENTS.md",
     "MACROS.md",
     "PACKAGING.md",
+    "PROJECT_STATUS.md",
     "HARDWARE_REPORT.md",
     "BACKLOG.md",
 )

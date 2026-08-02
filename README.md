@@ -71,6 +71,7 @@ sdk.close()
 ## Project Structure
 - `epiphan_sdk.py`: Core SDK library.
 - `test_sdk.py`: Test suite (supports hardware & mock testing).
+- `PROJECT_STATUS.md`: Current triage, validation results, known gaps, and phased remediation strategy.
 - `HARDWARE_REPORT.md`: Reverse-engineering documentation and component analysis.
 - `BACKLOG.md`: Development roadmap and protocol research notes.
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
@@ -82,6 +83,29 @@ sdk.close()
 Run the comprehensive test suite to verify your setup:
 ```bash
 pytest -v test_sdk.py
+```
+
+For repository-wide syntax validation:
+
+```bash
+python -m compileall -q .
+```
+
+Hardware validation requires the physical Epiphan KVM2USB and a powered target. See
+`PROJECT_STATUS.md` for the latest observed HID/UVC status and current signal-path
+limitations.
+
+Per-run config, user presets, screenshots, recordings, SRT files, and session logs
+are written under:
+
+```text
+runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/
+```
+
+To emit machine-consumable hardware diagnostics:
+
+```bash
+python hardware_probe.py --capture
 ```
 
 ## Contributing
