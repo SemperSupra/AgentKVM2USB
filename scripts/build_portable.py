@@ -20,10 +20,23 @@ REQUIRED_RUNTIME_FILES = (
     "requirements.txt",
 )
 ROOT_DATA_FILES = ("requirements.txt", "config.json")
+RUNTIME_PYTHON_FILES = (
+    "analyze_firmware.py",
+    "dump_hid.py",
+    "dump_usb.py",
+    "dump_usb2.py",
+    "epiphan_sdk.py",
+    "fpga_automation.py",
+    "frame_processor.py",
+    "kvmapp_gui.py",
+    "probe_hid.py",
+    "settings_dialog.py",
+)
 ROOT_DOCUMENTS = (
     "README.md",
     "AGENTS.md",
     "MACROS.md",
+    "PACKAGING.md",
     "HARDWARE_REPORT.md",
     "BACKLOG.md",
 )
@@ -72,7 +85,7 @@ def normalize_version(value: str) -> str:
 
 
 def ensure_runtime_files(root: Path) -> None:
-    missing = [name for name in REQUIRED_RUNTIME_FILES if not (root / name).is_file()]
+    missing = [name for name in REQUIRED_RUNTIME_FILES + RUNTIME_PYTHON_FILES if not (root / name).is_file()]
     if missing:
         raise FileNotFoundError("Required runtime files are missing: " + ", ".join(missing))
 
@@ -239,8 +252,8 @@ def stage_files(root: Path, stage: Path, version: str) -> None:
     ensure_runtime_files(root)
     stage.mkdir(parents=True, exist_ok=True)
 
-    for source in sorted(root.glob("*.py")):
-        shutil.copy2(source, stage / source.name)
+    for name in RUNTIME_PYTHON_FILES:
+        shutil.copy2(root / name, stage / name)
 
     for name in ROOT_DATA_FILES + ROOT_DOCUMENTS:
         source = root / name

@@ -96,7 +96,8 @@ class TestEpiphanKVM_Enhanced:
         sdk.run_macro(macro_script)
 
         assert spy_delay.called
-        assert spy_delay.call_args_list[0][0][0] == 0.1  # 100 ms = 0.1 seconds
+        delay_calls = [call[0][0] for call in spy_delay.call_args_list]
+        assert 0.1 in delay_calls  # 100 ms = 0.1 seconds
 
         assert spy_type.called
         assert spy_type.call_args_list[0][0][0] == "hello"

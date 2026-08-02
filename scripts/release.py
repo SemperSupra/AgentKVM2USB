@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--draft", action="store_true", help="Create a new release as a draft.")
     parser.add_argument("--prerelease", action="store_true", help="Create a new release as a prerelease.")
     parser.add_argument("--skip-build", action="store_true", help="Upload existing artifacts from dist/.")
+    parser.add_argument("--dry-run", action="store_true", help="Build and verify assets, then print release actions without uploading.")
     return parser.parse_args()
 
 
@@ -94,6 +95,12 @@ def main() -> int:
         [gh, "release", "view", tag, "--repo", args.repository],
         check=False,
     ).returncode == 0
+
+    if args.dry_run:
+        action = "update existing release" if release_exists else "create release"
+        print(f"Dry run: would {action} {args.repository} {tag}.")
+        print(f"Dry run: would upload {zip_path.name} and {checksum_path.name}.")
+        return 0
 
     if not release_exists:
         create = [

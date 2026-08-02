@@ -84,6 +84,7 @@ The release script:
 Optional examples:
 
 ```powershell
+py -3 scripts\release.py --tag v0.2.0 --dry-run
 py -3 scripts\release.py --tag v0.2.1 --target main --notes-file RELEASE_NOTES.md
 py -3 scripts\release.py --tag v0.2.1 --skip-build
 ```

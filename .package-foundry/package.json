@@ -1,11 +1,19 @@
 {
   "id": "AgentKVM2USB",
   "name": "AgentKVM2USB",
+  "owner": "SemperSupra",
+  "repo": "AgentKVM2USB",
+  "github": "SemperSupra/AgentKVM2USB",
   "channel": "public",
+  "enabled": true,
   "repository": "SemperSupra/AgentKVM2USB",
   "release": {
-    "strategy": "github-latest-release",
+    "strategy": "github-latest",
     "tagPattern": "v*",
+    "assetPattern": "AgentKVM2USB-v*-windows-portable.zip",
+    "checksumAssetPattern": "AgentKVM2USB-v*-windows-portable.zip.sha256",
+    "buildLocation": "local",
+    "githubActionsBuilds": false,
     "assetPatterns": {
       "portableZip": "AgentKVM2USB-v*-windows-portable.zip",
       "sha256": "AgentKVM2USB-v*-windows-portable.zip.sha256"
@@ -58,7 +66,8 @@
   },
   "commands": {
     "build": "py -3 scripts/build_portable.py",
-    "release": "py -3 scripts/release.py --tag v0.2.0"
+    "release": "py -3 scripts/release.py --tag v0.2.0",
+    "releaseDryRun": "py -3 scripts/release.py --tag v0.2.0 --dry-run"
   },
   "artifacts": [
     "dist/AgentKVM2USB-v*-windows-portable.zip",
