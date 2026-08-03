@@ -68,6 +68,29 @@ sdk.get_screen("observation.jpg")
 sdk.close()
 ```
 
+## Repository Coordination and Metadata
+
+The remote GitHub repository is the authoritative coordination surface for web
+agents, local terminal agents, automation, and human reviewers. A workstream must
+have a canonical issue, bounded branch, draft pull request, remote validation
+record, and `START`/`CHECKPOINT`/`DECISION`/`BLOCKER`/`HANDOFF` comments. Chat and
+local-only notes are not sufficient project records.
+
+Read:
+
+- [AGENTS.md](AGENTS.md) for mandatory agent operating rules;
+- [Remote Agent Coordination Protocol](docs/REMOTE_AGENT_COORDINATION.md) for branch, PR, ownership, handoff, and evidence discipline;
+- [repository-metadata.json](.github/repository-metadata.json) for expected project-specific GitHub and documentation metadata;
+- [agent-handoff.schema.json](.github/agent-handoff.schema.json) for machine-readable coordination records.
+
+Validate local and remote metadata drift with:
+
+```bash
+python scripts/validate_repository_metadata.py --remote auto
+```
+
+The validator reports differences and never silently rewrites repository settings.
+
 ## Project Structure
 - `epiphan_sdk.py`: Core SDK library.
 - `test_sdk.py`: Test suite (supports hardware & mock testing).
@@ -77,7 +100,10 @@ sdk.close()
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
 - `MACROS.md`: Documentation for the Macro Engine DSL.
 - `PACKAGING.md`: Local Windows artifact, release, and Package Foundry guidance.
-- `scripts/`: Local portable-build and GitHub Release scripts.
+- `docs/REMOTE_AGENT_COORDINATION.md`: Canonical remote multi-agent coordination protocol.
+- `.github/repository-metadata.json`: Expected repository identity and metadata.
+- `.github/agent-handoff.schema.json`: Structured agent coordination record schema.
+- `scripts/`: Local build, release, validation, and repository-governance scripts.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:
@@ -109,7 +135,12 @@ python hardware_probe.py --capture
 ```
 
 ## Contributing
-Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.
+
+Create or use a canonical GitHub issue before implementation, work on a bounded
+issue branch, open a draft PR early, and publish all validation and handoff state
+through the remote repository. See `BACKLOG.md` for development priorities.
+High-risk features such as firmware flashing remain deferred unless a canonical
+issue contains explicit authorization and a hardware-safe recovery plan.
 
 ---
 *Disclaimer: This project is not affiliated with Epiphan Video. It is a reverse-engineered community effort to provide modern automation support for legacy hardware.*
