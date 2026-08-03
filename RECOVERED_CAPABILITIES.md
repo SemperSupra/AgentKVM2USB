@@ -163,6 +163,11 @@ The read-only path is now integrated for application use:
 | `hardware_probe.py --include-mi00` | Includes MI_00 source, mode, refresh, flags, and user-mode data in the diagnostic JSON |
 | GUI Tools -> Read Config Status | Performs one on-demand read-only query and displays the parsed result |
 
+When MI_00 diagnostics are explicitly included, the SDK and hardware probe use
+MI_00 input-status activity as a third effective-signal evidence source beside
+HID and frame content. This is intended to explain future disagreements such as
+HID `0x0` with a valid MI_00 mode, or visible UVC frames with stale HID state.
+
 First live read-only MI_00 probe after official WinUSB INF binding:
 
 | Request | Payload | Parsed result |

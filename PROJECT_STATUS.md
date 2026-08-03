@@ -47,7 +47,7 @@ Observed:
 - With the revised adapter chain, captured frame showed the Wyse firmware screen: `No bootable devices found`.
 - HID usage `0x103`, feature report `3`, returned bytes `80 07 38 04 01`, decoded as `1920x1080 active`.
 - `get_status()` now reports `resolution: 1920x1080`, `is_signal_active: true`, and `signal_source: touch_feature_3`.
-- `hardware_probe.py` now emits HID collection metadata, camera open state, frame statistics when available, and an `effectiveSignal` block that combines HID signal and visible frame evidence. With `--include-mi00`, it also performs guarded read-only MI_00 config-interface reads for source, mode, refresh, flags, and user-mode sentinel state.
+- `hardware_probe.py` now emits HID collection metadata, camera open state, frame statistics when available, and an `effectiveSignal` block that combines HID signal and visible frame evidence. With `--include-mi00`, it also performs guarded read-only MI_00 config-interface reads for source, mode, refresh, flags, and user-mode sentinel state, and includes MI_00 active status in effective-signal reconciliation.
 - When the GUI owns the DirectShow capture device, a separate probe may report `cameraState.opened: false`, `frameStats: null`, and `effectiveSignal.reason: hid_report`; this is expected camera ownership behavior rather than a signal failure.
 - DirectShow advertises YUY2-only capture modes from `640x360` through `1920x1200`, with each mode allowing approximately `15` to `60.0002` fps. OpenCV currently opens the KVM2USB through `DSHOW` at `1920x1080`, FOURCC `YUY2`.
 - The enhanced probe observed `180` unique captured frames over `3` seconds, measured `60.0 fps`, while the Wyse firmware screen was static.
@@ -122,6 +122,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
 - `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar. It can include MI_00 results only when explicitly called with `include_mi00=True`.
+- Effective-signal reasons now distinguish `hid_mi00_and_frame`, `hid_and_mi00`, `mi00_and_frame`, and `mi00_report` when MI_00 diagnostics are explicitly included.
 - SDK configuration helpers parse/build recovered MI_00 payloads, and the opt-in live config path sends only the approved vendor IN read requests.
 - The live MI_00 probe is read-only by construction. It requires `--execute-read-only`, exposes only static-confirmed vendor IN requests, and has no code path for write/update requests.
 - User approval on 2026-08-03: start blocker 1, the read-only MI_00 config-interface probe. Guardrails: only vendor IN requests `0xB2`, `0xB3`, and `0xE2`; no OUT requests; no firmware/update/EDID writes; driver binding is a host-state change and must use the official INF only if needed.

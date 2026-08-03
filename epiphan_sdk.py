@@ -643,6 +643,9 @@ class EpiphanKVM_SDK:
         )
         hid_active = bool(status.get("is_signal_active"))
         cap_opened = bool(self.cap and self.cap.isOpened())
+        mi00 = self.get_config_status(libusb_dll=libusb_dll) if include_mi00 else None
+        mi00_input = ((mi00 or {}).get("requests", {}).get("input_status") or {}).get("parsed") or {}
+        mi00_active = bool(mi00_input.get("is_signal_active"))
 
         health = {
             "status": status,
@@ -658,16 +661,23 @@ class EpiphanKVM_SDK:
                 "stats": frame_stats,
             },
             "effective_signal": {
-                "active": hid_active or frame_nonblank,
+                "active": hid_active or frame_nonblank or mi00_active,
                 "hid_active": hid_active,
+                "mi00_active": mi00_active,
                 "frame_present": frame_present,
                 "frame_nonblank": frame_nonblank,
                 "frame_stale": frame_stale,
-                "reason": self._effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale),
+                "reason": self._effective_signal_reason(
+                    hid_active,
+                    frame_present,
+                    frame_nonblank,
+                    frame_stale,
+                    mi00_active,
+                ),
             },
         }
         if include_mi00:
-            health["mi00"] = self.get_config_status(libusb_dll=libusb_dll)
+            health["mi00"] = mi00
         return health
 
     @staticmethod
@@ -685,11 +695,19 @@ class EpiphanKVM_SDK:
         }
 
     @staticmethod
-    def _effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale):
+    def _effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale, mi00_active=False):
+        if hid_active and mi00_active and frame_nonblank and not frame_stale:
+            return "hid_mi00_and_frame"
         if hid_active and frame_nonblank and not frame_stale:
             return "hid_and_frame"
+        if hid_active and mi00_active:
+            return "hid_and_mi00"
         if hid_active:
             return "hid_report"
+        if mi00_active and frame_nonblank and not frame_stale:
+            return "mi00_and_frame"
+        if mi00_active:
+            return "mi00_report"
         if frame_nonblank and not frame_stale:
             return "frame_content"
         if frame_stale:

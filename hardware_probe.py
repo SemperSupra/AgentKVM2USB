@@ -173,8 +173,10 @@ def measure_frame_cadence(sdk: EpiphanKVM_SDK, duration_sec: float) -> dict | No
     }
 
 
-def effective_signal(status: dict, stats: dict | None) -> dict:
+def effective_signal(status: dict, stats: dict | None, mi00: dict | None = None) -> dict:
     hid_active = bool(status.get("is_signal_active"))
+    mi00_input = ((mi00 or {}).get("requests", {}).get("input_status") or {}).get("parsed") or {}
+    mi00_active = bool(mi00_input.get("is_signal_active"))
     frame_present = stats is not None
     frame_nonblank = bool(
         stats
@@ -182,19 +184,28 @@ def effective_signal(status: dict, stats: dict | None) -> dict:
         and stats["max"] > 10
     )
     return {
-        "active": hid_active or frame_nonblank,
+        "active": hid_active or mi00_active or frame_nonblank,
         "hidActive": hid_active,
+        "mi00Active": mi00_active,
         "framePresent": frame_present,
         "frameNonBlank": frame_nonblank,
-        "reason": _effective_signal_reason(hid_active, frame_present, frame_nonblank),
+        "reason": _effective_signal_reason(hid_active, frame_present, frame_nonblank, mi00_active),
     }
 
 
-def _effective_signal_reason(hid_active: bool, frame_present: bool, frame_nonblank: bool) -> str:
+def _effective_signal_reason(hid_active: bool, frame_present: bool, frame_nonblank: bool, mi00_active: bool = False) -> str:
+    if hid_active and mi00_active and frame_nonblank:
+        return "hid_mi00_and_frame"
     if hid_active and frame_nonblank:
         return "hid_and_frame"
+    if hid_active and mi00_active:
+        return "hid_and_mi00"
     if hid_active:
         return "hid_report"
+    if mi00_active and frame_nonblank:
+        return "mi00_and_frame"
+    if mi00_active:
+        return "mi00_report"
     if frame_nonblank:
         return "frame_content"
     if frame_present:
@@ -296,7 +307,7 @@ def probe(
             "frameCadence": cadence,
             "status": status,
             "mi00": mi00,
-            "effectiveSignal": effective_signal(status, stats),
+            "effectiveSignal": effective_signal(status, stats, mi00),
             "snapshot": str(Path(snapshot).resolve()) if snapshot else None,
         }
     finally:

@@ -321,6 +321,7 @@ class TestEpiphanKVM_Enhanced:
         assert health["effective_signal"] == {
             "active": True,
             "hid_active": True,
+            "mi00_active": False,
             "frame_present": True,
             "frame_nonblank": True,
             "frame_stale": False,
@@ -345,12 +346,18 @@ class TestEpiphanKVM_Enhanced:
         sdk.get_config_status = lambda libusb_dll=None: {
             "available": True,
             "error": None,
-            "requests": {"input_status": {"parsed": {"width": 1920, "height": 1080}}},
+            "requests": {
+                "input_status": {
+                    "parsed": {"width": 1920, "height": 1080, "is_signal_active": True}
+                }
+            },
         }
 
         health = sdk.get_device_health(include_mi00=True, libusb_dll="libusb-1.0.dll")
 
         assert health["mi00"]["available"] is True
+        assert health["effective_signal"]["mi00_active"] is True
+        assert health["effective_signal"]["reason"] == "mi00_report"
         assert health["mi00"]["requests"]["input_status"]["parsed"]["width"] == 1920
 
     def test_get_config_status_reports_probe_errors_as_data(self, mocker):
@@ -812,9 +819,23 @@ class TestHardwareProbeHelpers:
         assert effective_signal(status, stats) == {
             "active": True,
             "hidActive": False,
+            "mi00Active": False,
             "framePresent": True,
             "frameNonBlank": True,
             "reason": "frame_content",
+        }
+
+    def test_effective_signal_accepts_mi00_status(self):
+        status = {"is_signal_active": False}
+        mi00 = {"requests": {"input_status": {"parsed": {"is_signal_active": True}}}}
+
+        assert effective_signal(status, None, mi00) == {
+            "active": True,
+            "hidActive": False,
+            "mi00Active": True,
+            "framePresent": False,
+            "frameNonBlank": False,
+            "reason": "mi00_report",
         }
 
     def test_effective_signal_accepts_sparse_firmware_text(self):
@@ -831,6 +852,7 @@ class TestHardwareProbeHelpers:
         assert effective_signal(status, stats) == {
             "active": False,
             "hidActive": False,
+            "mi00Active": False,
             "framePresent": True,
             "frameNonBlank": False,
             "reason": "blank_frame",
