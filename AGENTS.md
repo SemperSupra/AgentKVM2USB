@@ -49,3 +49,23 @@ Please review `MACROS.md` for a full list of supported commands (`DELAY`, `TYPE`
 - Treat firmware flashing, EDID writes, and raw USB control transfers as high-risk deferred work unless a human explicitly authorizes a hardware-safe test plan.
 - Read `PROJECT_STATUS.md` before running hardware actions. It records current branch, release, hardware validation status, test coverage, and known gaps.
 - Keep generated screenshots, recordings, SRT files, and session logs out of commits.
+
+## Input Path Program
+
+Issue #8 is the canonical coordination thread for keyboard, relative-mouse,
+pen/touch, multi-device, and reconnect work.
+
+Before working on that issue, read:
+
+- `docs/INPUT_PATH_STRATEGY.md`
+- `docs/REMOTE_AGENT_COORDINATION.md`
+- the current issue #8 body and comments
+- any active pull request linked from issue #8
+
+Use GitHub as the handoff surface between local agents and the web assistant.
+Post the required `START`, `CHECKPOINT`, and `HANDOFF` comments to issue #8, push
+all intended commits, and open or update a draft pull request before ending the
+local-agent turn.
+
+Unless issue #8 records a newer assignment, begin with Phase A discovery and
+diagnostics. Phase A must not change input report bytes.
