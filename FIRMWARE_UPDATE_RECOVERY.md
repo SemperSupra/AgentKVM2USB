@@ -1,6 +1,6 @@
 # Firmware And FPGA Update Recovery
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-08-03
 
 This document tracks offline recovery of Epiphan KVM2USB 3.0 firmware and FPGA
 update support. It is intentionally scoped to static parsing and transfer-plan
@@ -96,6 +96,28 @@ The payload after the sync word begins with configuration command words such as
 `0c8500e0`, `04008c85`, and `200c8c82`. The next recovery step is a Xilinx
 Spartan-6 bitstream packet decoder that can distinguish header, configuration,
 CRC, and desynchronization commands.
+
+The file stores bit-reversed bytes. Reversing the bits in each byte normalizes
+the sync word to canonical Xilinx `aa 99 55 66`. The firmware inspector now
+emits first-pass packet counts, opcode counts, register counts, truncation
+counts, and the first 16 decoded packet-like records without dumping frame
+data.
+
+Current real-payload first-pass summary:
+
+| Field | Value |
+| --- | --- |
+| packet-like records | `200` |
+| opcode counts | `nop=195`, `read=1`, `write=4` |
+| packet type counts | `0=179`, `1=16`, `2=1`, `4=4` |
+| truncated interpretations | `1` |
+| first normalized header | `0x30a10007` |
+
+The non-standard register values and one truncated interpretation mean this is
+packet framing and bit-order recovery, not a complete Spartan-6 semantic decode.
+Next step: verify the exact Spartan-6 register-field interpretation against
+UG380 and TORC before treating register names, CRC behavior, or frame payload
+boundaries as authoritative.
 
 ## Vendor Update Sequence
 

@@ -6,7 +6,15 @@ import numpy as np
 import json
 import re
 import threading
-from epiphan_firmware import parse_epiphan_text_edid, parse_fpga_bitstream, parse_fx3_image, summarize_edid
+from epiphan_firmware import (
+    iter_fpga_packets,
+    normalize_fpga_payload,
+    parse_epiphan_text_edid,
+    parse_fpga_bitstream,
+    parse_fx3_image,
+    summarize_edid,
+    summarize_fpga_packets,
+)
 from epiphan_config import parse_recovered_response, recovered_request_map
 from mi00_probe import Mi00ProbeError, read_config_request, read_only_request_by_name
 from scripts.inspect_epiphan_firmware import inspect_payload
@@ -469,6 +477,22 @@ class TestEpiphanKVM_Enhanced:
         assert bitstream.sync_word == bytes.fromhex("55 99 aa 66")
         assert bitstream.preamble == b"\xff" * 16
         assert bitstream.payload.startswith(bytes.fromhex("55 99 aa 66"))
+
+    def test_spartan6_packet_decoder_normalizes_bit_reversed_bytes(self):
+        """Covers the Xilinx packet preamble observed in kvm2usb3.bin."""
+        canonical = bytes.fromhex("aa 99 55 66 30 00 80 01 00 00 00 0d")
+        reverse_table = bytes(int(f"{byte:08b}"[::-1], 2) for byte in range(256))
+        bit_reversed = bytes(reverse_table[byte] for byte in canonical)
+        bitstream = parse_fpga_bitstream(bit_reversed)
+
+        assert normalize_fpga_payload(bitstream).startswith(bytes.fromhex("aa 99 55 66"))
+        packets = list(iter_fpga_packets(bitstream))
+
+        assert packets[0].packet_type == 1
+        assert packets[0].opcode == "write"
+        assert packets[0].word_count == 1
+        assert packets[0].data_words_preview == (0x0000000D,)
+        assert summarize_fpga_packets(bitstream)["register_counts"] == {"CMD": 1}
 
     def test_inspect_epiphan_firmware_payload_summarizes_fx3_image(self):
         record_data = (0x11111111).to_bytes(4, "little")

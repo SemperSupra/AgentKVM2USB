@@ -14,6 +14,7 @@ from epiphan_firmware import (
     parse_epiphan_text_edid,
     parse_fpga_bitstream,
     parse_fx3_image,
+    summarize_fpga_packets,
     summarize_edid,
 )
 
@@ -53,6 +54,7 @@ def inspect_payload(name: str, data: bytes) -> dict:
         )
     elif name in FPGA_IMAGE_NAMES:
         bitstream = parse_fpga_bitstream(data)
+        packet_summary = summarize_fpga_packets(bitstream)
         base.update(
             {
                 "kind": "fpga_bitstream",
@@ -61,6 +63,7 @@ def inspect_payload(name: str, data: bytes) -> dict:
                 "sync_word": bitstream.sync_word.hex(),
                 "preamble_size": len(bitstream.preamble),
                 "payload_size": len(bitstream.payload),
+                "packet_summary": packet_summary,
             }
         )
     elif name.endswith(".edid"):
