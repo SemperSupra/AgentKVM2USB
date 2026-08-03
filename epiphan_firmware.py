@@ -266,16 +266,19 @@ def iter_fpga_packets(
         register = None
         word_count = 0
         if packet_type == 1:
-            register = (raw_word >> 13) & 0x3FFF
+            raw_register = (raw_word >> 13) & 0x3FFF
+            register = raw_register & 0x1F
             word_count = raw_word & 0x7FF
-            last_register = register
+            if opcode == "nop":
+                register = None
+                word_count = 0
+            else:
+                last_register = register
         elif packet_type == 2:
             register = last_register
             word_count = raw_word & 0x07FFFFFF
         else:
             word_count = 0
-        if opcode == "nop":
-            register = None
 
         requested_data_end = offset + word_count * 4
         data_truncated = requested_data_end > len(payload)

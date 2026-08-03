@@ -98,7 +98,9 @@ Spartan-6 bitstream packet decoder that can distinguish header, configuration,
 CRC, and desynchronization commands.
 
 The file stores bit-reversed bytes. Reversing the bits in each byte normalizes
-the sync word to canonical Xilinx `aa 99 55 66`. The firmware inspector now
+the sync word to canonical Xilinx `aa 99 55 66`. AMD packet documentation
+describes Type 1 register packets with a 14-bit register field where only the
+low five bits are used, and opcode `00` as NOOP. The firmware inspector now
 emits first-pass packet counts, opcode counts, register counts, truncation
 counts, and the first 16 decoded packet-like records without dumping frame
 data.
@@ -107,17 +109,19 @@ Current real-payload first-pass summary:
 
 | Field | Value |
 | --- | --- |
-| packet-like records | `200` |
-| opcode counts | `nop=195`, `read=1`, `write=4` |
-| packet type counts | `0=179`, `1=16`, `2=1`, `4=4` |
+| packet-like records | `134` |
+| opcode counts | `nop=131`, `reserved=1`, `write=2` |
+| packet type counts | `0=116`, `1=12`, `2=1`, `4=5` |
 | truncated interpretations | `1` |
-| first normalized header | `0x30a10007` |
+| first normalized header | `0x30a10007`, type-1 write to low-five-bit register `LOUT`, word count `7` |
 
-The non-standard register values and one truncated interpretation mean this is
-packet framing and bit-order recovery, not a complete Spartan-6 semantic decode.
-Next step: verify the exact Spartan-6 register-field interpretation against
-UG380 and TORC before treating register names, CRC behavior, or frame payload
-boundaries as authoritative.
+The reserved packet type values and one truncated interpretation mean this is
+bit-order and partial packet-framing recovery, not a complete Spartan-6 semantic
+decode. Possibilities include a payload region that is not plain configuration
+packets, an encapsulated stream, compression/encryption, or a remaining
+Spartan-6-specific framing rule. Next step: cross-check against UG380 and TORC
+before treating register names, CRC behavior, or frame payload boundaries as
+authoritative.
 
 ## Vendor Update Sequence
 
