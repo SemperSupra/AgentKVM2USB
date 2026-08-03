@@ -46,6 +46,12 @@
       "packaging": "PACKAGING.md",
       "hardware_report": "HARDWARE_REPORT.md"
     },
+    "canonical_prompts": {
+      "local_agent_kickoff": "prompts/LOCAL_AGENT_KICKOFF.md",
+      "web_agent_review": "prompts/WEB_AGENT_REVIEW.md",
+      "new_repository_bootstrap": "prompts/NEW_REPOSITORY_BOOTSTRAP.md",
+      "renderer": "scripts/render_agent_prompt.py"
+    },
     "canonical_workstreams": {
       "input_path": 8,
       "downstream_hid_recovery": 14,
