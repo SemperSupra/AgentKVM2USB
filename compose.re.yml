@@ -42,7 +42,10 @@ services:
 
   angr:
     <<: *runtime-defaults
-    image: ${ANGR_IMAGE:-angr/angr:latest}
+    # The angr/angr publisher image is a bare dev base without angr installed,
+    # so angr runs in the project runner image, which pins angr in its Python
+    # requirements alongside the other analysis libraries.
+    image: ${ANGR_IMAGE:-agentkvm2usb/re-runner:1}
     working_dir: /work
     volumes:
       - ${RE_INPUT_ROOT:-./.work/re/input}:/work/input:ro
@@ -57,7 +60,13 @@ services:
     image: ${GHIDRA_IMAGE:-agentkvm2usb/ghidra:12.1.2-upstream}
     environment:
       MODE: headless
-      GHIDRA_HEADLESS_MAXMEM: ${GHIDRA_HEADLESS_MAXMEM:-4G}
+      # The upstream entrypoint reads MAXMEM. Ghidra writes ~/.config/ghidra
+      # using Java's user.home (the passwd home /home/ghidra, not $HOME), so a
+      # writable tmpfs overlays that path on the otherwise read-only root.
+      MAXMEM: ${GHIDRA_HEADLESS_MAXMEM:-4G}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+      - /home/ghidra/.config:rw,noexec,nosuid,size=64m
     volumes:
       - ${RE_INPUT_ROOT:-./.work/re/input}:/home/ghidra/input:ro
       - ${RE_OUTPUT_ROOT:-./.work/re/output}:/home/ghidra/output:rw
@@ -81,7 +90,13 @@ services:
     volumes:
       - ${RE_INPUT_ROOT:-./.work/re/input}:/input:ro
       - ${RE_OUTPUT_ROOT:-./.work/re/output}:/output:rw
-    entrypoint: ["syft"]
+      - ${RE_CACHE_ROOT:-./.work/re/cache}/scan-tmp:/tmp:rw
+      - ${RE_CACHE_ROOT:-./.work/re/cache}/syft:/.cache:rw
+    # The syft image's binary lives at /syft, not on PATH. The docker-archive
+    # scan extracts image layers, so /tmp and /.cache are host-backed writable
+    # dirs instead of the 512 MiB default tmpfs.
+    tmpfs: []
+    entrypoint: ["/syft"]
     command: ["version"]
 
   trivy:
@@ -90,6 +105,8 @@ services:
     volumes:
       - ${RE_INPUT_ROOT:-./.work/re/input}:/input:ro
       - ${RE_CACHE_ROOT:-./.work/re/cache}/trivy:/root/.cache/trivy:rw
+      - ${RE_CACHE_ROOT:-./.work/re/cache}/scan-tmp:/tmp:rw
       - ${RE_OUTPUT_ROOT:-./.work/re/output}:/output:rw
+    tmpfs: []
     entrypoint: ["trivy"]
     command: ["--version"]

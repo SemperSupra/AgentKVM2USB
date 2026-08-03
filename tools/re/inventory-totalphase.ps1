@@ -86,9 +86,19 @@ foreach ($archive in $archives) {
     }
 }
 
-$candidates = Get-ChildItem -LiteralPath $extractRoot -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
-    $_.Name -match '^(beagle(\.py|\.so|\.dll)?|libbeagle\.so.*|beagle\.h)$' -or
-    $_.FullName -match '(?i)linux.*(x86_64|x64|64-bit|64bit).*beagle'
+$linuxCandidates = Get-ChildItem -LiteralPath $extractRoot -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -match '^(beagle\.so|libbeagle\.so.*)$'
+} | ForEach-Object {
+    [pscustomobject]@{
+        relative_path = $_.FullName.Substring($stageRoot.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+        file_name = $_.Name
+        length = $_.Length
+        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+}
+
+$windowsCandidates = Get-ChildItem -LiteralPath $extractRoot -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -match '^(beagle\.dll|beagle_py\.py|beagle\.h|beagle\.lib)$'
 } | ForEach-Object {
     [pscustomobject]@{
         relative_path = $_.FullName.Substring($stageRoot.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
@@ -105,10 +115,12 @@ $manifest = [ordered]@{
     staged_directory = $stageRoot
     source_file_count = $inventory.Count
     files = $inventory
-    linux_beagle_api_candidates = @($candidates)
+    linux_beagle_api_candidates = @($linuxCandidates)
+    windows_beagle_api_candidates = @($windowsCandidates)
     notes = @(
         'Vendor files are staged under .work and must remain outside Git.',
         'The Linux x86-64 Beagle API is preferred for containerized capture.',
+        'The missing Linux Beagle API blocks only containerized live capture; a Windows host shim emits the same JSONL for container analysis.',
         'The Windows driver and Data Center application are retained only for differential testing when required.'
     )
 }
@@ -116,5 +128,6 @@ $manifest = [ordered]@{
 $manifestPath = Join-Path $stageRoot 'inventory.json'
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 Write-Host "Staged $($inventory.Count) Total Phase files in $stageRoot"
-Write-Host "Linux Beagle API candidates: $(@($candidates).Count)"
+Write-Host "Linux Beagle API candidates: $(@($linuxCandidates).Count)"
+Write-Host "Windows Beagle API candidates: $(@($windowsCandidates).Count)"
 Write-Host "Inventory: $manifestPath"
