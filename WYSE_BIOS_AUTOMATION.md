@@ -31,6 +31,12 @@ Press F2 key to reboot into setup.
 Press F5 key to run onboard diagnostics.
 ```
 
+Read-only MI_00 status after the Wyse power cycle also reports:
+
+```text
+RGB 1920x1080p@60.318, HDMI
+```
+
 ## Current Blocker
 
 The KVM2USB accepts keyboard HID reports from the host, but the Wyse did not
@@ -43,6 +49,7 @@ Confirmed host-side write behavior:
 | `PRESS f2` | Macro succeeded | No visible change |
 | `PRESS f5` | Macro succeeded | No visible change |
 | `HOTKEY ctrl alt delete` | Macro succeeded | No visible change |
+| `PRESS capslock` twice | `{"press": 9, "release": 9}` each time | KVM LED status remained `caps=false` |
 | Raw keyboard report with ID `1` | `hid.write(...)` returned `9` | No visible change |
 | Legacy keyboard report without report ID | `hid.write(...)` returned `-1` | Not valid for this device |
 
@@ -51,6 +58,10 @@ the Wyse-facing USB HID side is not affecting the target. The highest-priority
 physical check is the target-side USB connection from the Epiphan KVM cable to
 the Wyse. The video-only DVI path can work even when that USB leg is absent or
 not enumerated.
+
+Post-power-cycle note: after the Wyse was power-cycled, video stayed stable at
+`1920x1080 active`, the boot-failure prompt returned, and another `PRESS f2`
+still wrote `9` byte press/release reports without changing the screen.
 
 ## Required Pre-Mapping Verification
 
