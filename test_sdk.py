@@ -1,12 +1,30 @@
 import pytest
+import datetime
 import os
 import time
 import cv2
 import numpy as np
 import json
 import re
+import threading
+from epiphan_firmware import (
+    iter_fpga_packets,
+    normalize_fpga_payload,
+    parse_epiphan_text_edid,
+    parse_fpga_bitstream,
+    parse_fx3_image,
+    summarize_edid,
+    summarize_fpga_packets,
+)
+from epiphan_config import parse_recovered_response, recovered_request_map
+from mi00_probe import Mi00ProbeError, read_config_request, read_only_request_by_name
+from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
+from hardware_probe import effective_signal, frame_stats, parse_dshow_options
+from trace_replay import TraceReplay
+from agent_api import api_response
+from scripts.capture_mi00_experiment import default_experiment_id, write_metadata
 
 class TestEpiphanKVM_Enhanced:
     """
@@ -82,6 +100,8 @@ class TestEpiphanKVM_Enhanced:
         spy_press = mocker.spy(sdk, 'press')
         spy_hotkey = mocker.spy(sdk, 'hotkey')
         spy_click = mocker.spy(sdk, 'click')
+        spy_move = mocker.spy(sdk, 'move_mouse_relative')
+        spy_scroll = mocker.spy(sdk, 'scroll_mouse')
 
         macro_script = """
         # This is a comment
@@ -90,9 +110,17 @@ class TestEpiphanKVM_Enhanced:
         PRESS enter
         HOTKEY ctrl alt delete
         CLICK 0.5 0.5 2
+        MOVE 10 -5
+        SCROLL -1
         """
 
-        sdk.run_macro(macro_script)
+        result = sdk.run_macro(macro_script)
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        assert [entry["command"] for entry in result["executed"]] == [
+            "DELAY", "TYPE", "PRESS", "HOTKEY", "CLICK", "MOVE", "SCROLL"
+        ]
 
         assert spy_delay.called
         delay_calls = [call[0][0] for call in spy_delay.call_args_list]
@@ -112,9 +140,119 @@ class TestEpiphanKVM_Enhanced:
         assert spy_click.called
         assert spy_click.call_args_list[0][0] == (0.5, 0.5, 2)
 
+        assert spy_move.called
+        assert spy_move.call_args_list[0][0] == (10, -5, 0)
+
+        assert spy_scroll.called
+        assert spy_scroll.call_args_list[0][0] == (-1,)
+
         # Test error handling (should not crash)
-        sdk.run_macro("INVALID_CMD")
-        sdk.run_macro("CLICK 0.5") # Missing Y
+        invalid_result = sdk.run_macro("INVALID_CMD")
+        click_error = sdk.run_macro("CLICK 0.5") # Missing Y
+        assert invalid_result["success"] is False
+        assert invalid_result["errors"][0]["message"] == "Unknown command 'INVALID_CMD'"
+        assert click_error["success"] is False
+        assert click_error["errors"][0]["message"] == "CLICK requires at least x_percent and y_percent"
+
+    def test_macro_dry_run_validates_without_executing(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.type = mocker.Mock()
+        sdk.press = mocker.Mock()
+        sdk.hotkey = mocker.Mock()
+        sdk.click = mocker.Mock()
+        sdk.move_mouse_relative = mocker.Mock()
+        sdk.scroll_mouse = mocker.Mock()
+
+        result = sdk.validate_macro("PRESS enter\nHOTKEY ctrl alt delete\nMOVE 1 2\nSCROLL -1")
+
+        assert result["success"] is True
+        assert [entry["command"] for entry in result["executed"]] == ["PRESS", "HOTKEY", "MOVE", "SCROLL"]
+        sdk.press.assert_not_called()
+        sdk.hotkey.assert_not_called()
+        sdk.move_mouse_relative.assert_not_called()
+        sdk.scroll_mouse.assert_not_called()
+
+    def test_macro_validation_rejects_unknown_keys(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+
+        result = sdk.validate_macro("PRESS nope\nHOTKEY ctrl nope")
+
+        assert result["success"] is False
+        assert result["errors"] == [
+            {"line": 1, "text": "PRESS nope", "message": "Unknown key 'nope'"},
+            {"line": 2, "text": "HOTKEY ctrl nope", "message": "Unknown key/modifier 'nope'"},
+        ]
+
+    def test_named_macro_library_persists_to_profile_root(self, tmp_path):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.profile_root = tmp_path
+        sdk.macro_library_path = tmp_path / "macros.json"
+        sdk._load_macro_library()
+
+        assert sdk.save_macro("Boot Menu", "PRESS f12") is True
+        assert sdk.list_macros() == ["Boot Menu"]
+        assert sdk.get_macro("Boot Menu") == "PRESS f12"
+
+        reloaded = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        reloaded.profile_root = tmp_path
+        reloaded.macro_library_path = tmp_path / "macros.json"
+        reloaded._load_macro_library()
+
+        assert reloaded.get_macro("Boot Menu") == "PRESS f12"
+        assert reloaded.delete_macro("Boot Menu") is True
+        assert reloaded.list_macros() == []
+
+    def test_run_named_macro_reports_missing_name(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.macro_library = {}
+
+        assert sdk.run_named_macro("missing") == {
+            "success": False,
+            "executed": [],
+            "errors": [{"line": 0, "text": "missing", "message": "Named macro not found"}],
+        }
+
+    def test_headless_api_exposes_status_health_and_macros(self):
+        class FakeSdk:
+            def get_status(self):
+                return {"resolution": "1920x1080"}
+
+            def get_device_health(self, include_mi00=False):
+                return {"include_mi00": include_mi00}
+
+            def list_macros(self):
+                return ["Boot Menu"]
+
+            def get_processed_frame(self):
+                return None
+
+            def run_macro(self, script, dry_run=False):
+                return {"script": script, "dry_run": dry_run}
+
+            def run_named_macro(self, name, dry_run=False):
+                return {"name": name, "dry_run": dry_run}
+
+            def validate_macro(self, script):
+                return {"validated": script}
+
+        sdk = FakeSdk()
+
+        assert api_response("GET", "/status", b"", sdk) == (200, {"resolution": "1920x1080"})
+        assert api_response("GET", "/health?include_mi00=1", b"", sdk) == (200, {"include_mi00": True})
+        assert api_response("GET", "/macros", b"", sdk) == (200, {"macros": ["Boot Menu"]})
+        assert api_response("GET", "/frame", b"", sdk) == (200, {"available": False, "shape": None})
+        assert api_response("POST", "/macro", b'{"script":"PRESS enter","dry_run":true}', sdk) == (
+            200,
+            {"script": "PRESS enter", "dry_run": True},
+        )
+        assert api_response("POST", "/named-macro", b'{"name":"Boot Menu"}', sdk) == (
+            200,
+            {"name": "Boot Menu", "dry_run": False},
+        )
+        assert api_response("POST", "/macro/validate", b'{"script":"PRESS enter"}', sdk) == (
+            200,
+            {"validated": "PRESS enter"},
+        )
 
     def test_documented_macro_keys_are_mapped(self):
         """Ensures MACROS.md key names are supported by the SDK key map."""
@@ -123,9 +261,22 @@ class TestEpiphanKVM_Enhanced:
             *list("0123456789"),
             "enter", "esc", "backspace", "tab", "space",
             "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-            "delete", "up", "down", "left", "right",
+            "printscreen", "scrolllock", "pause", "insert", "home", "pageup",
+            "delete", "end", "pagedown", "up", "down", "left", "right",
+            "numlock", "capslock",
         }
         assert expected.issubset(EpiphanKVM_SDK.KEY_MAP.keys())
+
+    def test_run_macro_reports_hid_write_results(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.press = mocker.Mock(return_value={"press": 9, "release": 9})
+        sdk.hotkey = mocker.Mock(return_value={"press": 9, "release": 9})
+
+        result = sdk.run_macro("PRESS f2\nHOTKEY ctrl alt delete")
+
+        assert result["success"] is True
+        assert result["executed"][0]["write_result"] == {"press": 9, "release": 9}
+        assert result["executed"][1]["write_result"] == {"press": 9, "release": 9}
 
     def test_click_clamps_normalized_coordinates(self, sdk):
         """Protects HID reports from invalid normalized click coordinates."""
@@ -141,14 +292,569 @@ class TestEpiphanKVM_Enhanced:
         sdk.touch_dev = FakeTouchDevice()
         sdk.click(2.0, -1.0, button=1)
 
-        assert reports[0] == [0, 1, 255, 127, 0, 0]
-        assert reports[1] == [0, 0, 0, 0, 0, 0]
+        assert reports[0] == [5, 3, 255, 127, 0, 0, 0]
+        assert reports[1] == [5, 2, 255, 127, 0, 0, 0]
+
+    def test_raw_keyboard_uses_vendor_report_id(self):
+        """Matches the official KvmApp keyboard HID output report framing."""
+        reports = []
+
+        class FakeKeyboardDevice:
+            def write(self, report):
+                reports.append(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.kb_dev = FakeKeyboardDevice()
+
+        sdk._raw_kb(0x01, [EpiphanKVM_SDK.KEY_MAP["delete"]])
+
+        assert reports == [[1, 1, 0, 76, 0, 0, 0, 0, 0]]
+
+    def test_raw_keyboard_returns_write_count(self):
+        class FakeKeyboardDevice:
+            def write(self, report):
+                return len(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.kb_dev = FakeKeyboardDevice()
+
+        assert sdk._raw_kb(0, [EpiphanKVM_SDK.KEY_MAP["f2"]]) == 9
+
+    def test_raw_mouse_uses_vendor_report_id_and_clamps_signed_deltas(self):
+        """Matches the official KvmApp relative mouse HID output framing."""
+        reports = []
+
+        class FakeMouseDevice:
+            def write(self, report):
+                reports.append(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.mouse_dev = FakeMouseDevice()
+
+        sdk._raw_mouse(0x01, 200, -200, 5)
+
+        assert reports == [[2, 1, 127, 129, 5]]
+
+    def test_feature_reports_use_vendor_report_ids(self, mocker):
+        """Covers recovered touch-type and re-enumeration feature reports offline."""
+        reports = []
+
+        class FakeSystemDevice:
+            def send_feature_report(self, report):
+                reports.append(report)
+                return len(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.sys_dev = FakeSystemDevice()
+        sdk._log_event = lambda *args: None
+        sleep = mocker.patch.object(time, "sleep")
+
+        assert sdk.set_touch_type(1) is True
+        sdk.reenumerate_target()
+
+        assert reports == [[6, 1], [7, 0]]
+        sleep.assert_called_once_with(2)
 
     def test_stop_recording_sets_stop_flag(self, sdk):
         """Verifies GUI stop controls have a testable SDK stop signal."""
         sdk._stop_recording = False
         sdk.stop_recording()
         assert sdk._stop_recording is True
+
+    def test_get_input_signal_reads_touch_feature_report(self):
+        """Verifies KVM2USB 3.0 live mode parsing from the observed HID report."""
+        class FakeTouchDevice:
+            def get_feature_report(self, report_id, length):
+                assert report_id == 3
+                assert length == 8
+                return [0x80, 0x07, 0x38, 0x04, 0x01]
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.touch_dev = FakeTouchDevice()
+        sdk.sys_dev = None
+
+        assert sdk.get_input_signal() == {
+            "width": 1920,
+            "height": 1080,
+            "is_active": True,
+            "source": "touch_feature_3",
+        }
+        assert sdk.get_input_resolution() == (1920, 1080)
+
+    def test_get_firmware_version_reads_usb_string_index_3(self):
+        """Verifies the vendor app's firmware-version path is exposed read-only."""
+        class FakeHidDevice:
+            def get_indexed_string(self, index):
+                assert index == 3
+                return "4.0.0-r39896"
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.kb_dev = FakeHidDevice()
+        sdk.mouse_dev = None
+        sdk.touch_dev = None
+        sdk.sys_dev = None
+
+        assert sdk.get_firmware_version() == "4.0.0-r39896"
+
+    def test_get_status_includes_firmware_version(self):
+        """Keeps machine-consumable status aligned with recovered read-only data."""
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.get_input_signal = lambda: {
+            "width": 1920,
+            "height": 1080,
+            "is_active": True,
+            "source": "touch_feature_3",
+        }
+        sdk.get_led_status = lambda: {"caps": False, "num": False, "scroll": False}
+        sdk.get_firmware_version = lambda: "4.0.0-r39896"
+
+        assert sdk.get_status() == {
+            "resolution": "1920x1080",
+            "is_signal_active": True,
+            "leds": {"caps": False, "num": False, "scroll": False},
+            "signal_source": "touch_feature_3",
+            "firmware_version": "4.0.0-r39896",
+        }
+
+    def test_get_device_health_combines_hid_camera_and_frame_state(self):
+        """Gives agents a single structured health model for signal decisions."""
+        class FakeCapture:
+            def isOpened(self):
+                return True
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.latest_frame = np.full((4, 4, 3), 255, dtype=np.uint8)
+        sdk.latest_frame_seq = 7
+        sdk.latest_frame_at = time.time()
+        sdk.current_camera_name = "KVM2USB 3.0"
+        sdk.cap = FakeCapture()
+        sdk.get_status = lambda: {
+            "resolution": "1920x1080",
+            "is_signal_active": True,
+            "leds": {"caps": False, "num": False, "scroll": False},
+            "signal_source": "touch_feature_3",
+            "firmware_version": "4.0.0-r39896",
+        }
+
+        health = sdk.get_device_health()
+
+        assert health["camera"] == {"name": "KVM2USB 3.0", "opened": True}
+        assert health["frame"]["present"] is True
+        assert health["frame"]["sequence"] == 7
+        assert health["frame"]["stale"] is False
+        assert health["frame"]["stats"]["non_black_ratio"] == 1.0
+        assert health["effective_signal"] == {
+            "active": True,
+            "hid_active": True,
+            "mi00_active": False,
+            "frame_present": True,
+            "frame_nonblank": True,
+            "frame_stale": False,
+            "reason": "hid_and_frame",
+        }
+
+    def test_get_device_health_can_include_mi00_status(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.latest_frame = None
+        sdk.latest_frame_seq = 0
+        sdk.latest_frame_at = None
+        sdk.current_camera_name = None
+        sdk.cap = None
+        sdk.get_status = lambda: {
+            "resolution": "0x0",
+            "is_signal_active": False,
+            "leds": {"caps": False, "num": False, "scroll": False},
+            "signal_source": "none",
+            "firmware_version": None,
+        }
+        sdk.get_config_status = lambda libusb_dll=None: {
+            "available": True,
+            "error": None,
+            "requests": {
+                "input_status": {
+                    "parsed": {"width": 1920, "height": 1080, "is_signal_active": True}
+                }
+            },
+            "user_modes": [],
+        }
+
+        health = sdk.get_device_health(include_mi00=True, libusb_dll="libusb-1.0.dll")
+
+        assert health["mi00"]["available"] is True
+        assert health["effective_signal"]["mi00_active"] is True
+        assert health["effective_signal"]["reason"] == "mi00_report"
+        assert health["mi00"]["requests"]["input_status"]["parsed"]["width"] == 1920
+
+    def test_get_config_status_reports_probe_errors_as_data(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        mocker.patch("mi00_probe.find_device", side_effect=Mi00ProbeError("driver missing"))
+
+        assert sdk.get_config_status() == {
+            "available": False,
+            "error": "driver missing",
+            "requests": {},
+            "user_modes": [],
+        }
+
+    def test_get_config_status_reads_three_user_mode_slots(self, mocker):
+        class FakeDevice:
+            def __init__(self):
+                self.calls = []
+
+        def fake_read(dev, name, w_value=0, timeout_ms=1000):
+            dev.calls.append((name, w_value, timeout_ms))
+            parsed = {"is_signal_active": True} if name == "input_status" else {}
+            return type(
+                "FakeRead",
+                (),
+                {"as_dict": lambda self: {"name": name, "wValue": w_value, "parsed": parsed}},
+            )()
+
+        dev = FakeDevice()
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        mocker.patch("mi00_probe.find_device", return_value=dev)
+        mocker.patch("mi00_probe.read_config_request", side_effect=fake_read)
+
+        status = sdk.get_config_status(timeout_ms=250)
+
+        assert status["available"] is True
+        assert [mode["wValue"] for mode in status["user_modes"]] == [0, 1, 2]
+        assert status["requests"]["user_mode"]["wValue"] == 0
+        assert dev.calls == [
+            ("input_status", 0, 250),
+            ("device_flags", 0, 250),
+            ("user_mode", 0, 250),
+            ("user_mode", 1, 250),
+            ("user_mode", 2, 250),
+        ]
+
+    def test_capture_compression_request_reports_backend_refusal(self):
+        class FakeCapture:
+            def __init__(self):
+                self.opened = True
+
+            def isOpened(self):
+                return self.opened
+
+            def set(self, prop, value):
+                return True
+
+            def get(self, prop):
+                return cv2.VideoWriter_fourcc(*"YUY2")
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.cap = FakeCapture()
+        sdk.current_camera_name = None
+
+        result = sdk.set_capture_compression_request(True)
+
+        assert result == {
+            "success": False,
+            "requested_fourcc": "MJPG",
+            "actual_fourcc": "YUY2",
+            "changed": False,
+            "error": "capture backend did not accept requested FOURCC",
+        }
+
+    def test_parse_config_input_status_payload(self):
+        """Documents the recovered MI_00 request 0xB2 InputStatusInfo layout."""
+        payload = bytearray(29)
+        payload[0:4] = b"DVI\x00"
+        payload[12:17] = b"VESA\x00"
+        payload[20:24] = (59940).to_bytes(4, "little")
+        payload[24:26] = (1920).to_bytes(2, "little")
+        payload[26:28] = (1080).to_bytes(2, "little")
+        payload[28] = 0
+
+        assert EpiphanKVM_SDK.parse_config_input_status(payload) == {
+            "source": "DVI",
+            "mode_name": "VESA",
+            "width": 1920,
+            "height": 1080,
+            "refresh_hz": 59.94,
+            "scan_mode": "p",
+            "scan_flag_raw": 0,
+            "is_signal_active": True,
+            "label": "DVI 1920x1080p@59.94, VESA",
+        }
+
+    def test_recovered_config_request_map_is_machine_consumable(self):
+        requests = recovered_request_map(include_writes=True)
+        by_name = {request["name"]: request for request in requests}
+
+        assert by_name["input_status"]["request_hex"] == "0xb2"
+        assert by_name["input_status"]["bmRequestType_hex"] == "0xc0"
+        assert by_name["input_status"]["risk"] == "read_only"
+        assert by_name["write_device_flags"]["request_hex"] == "0xe3"
+        assert by_name["write_device_flags"]["risk"] == "device_write"
+        assert by_name["update_initiate"]["risk"] == "firmware_write"
+
+    def test_parse_recovered_config_response_dispatches_to_sdk_parsers(self):
+        assert parse_recovered_response("device_flags", [0x16]) == {
+            "raw": 0x16,
+            "preserve_aspect_ratio": True,
+            "performance_mode": True,
+            "audio_selector_multichannel": True,
+            "unknown_bits": 0,
+        }
+
+    def test_mi00_probe_refuses_non_read_only_requests(self):
+        with pytest.raises(Mi00ProbeError):
+            read_only_request_by_name("write_device_flags")
+
+    def test_mi00_probe_uses_static_confirmed_read_only_transfer(self):
+        class FakeDevice:
+            def __init__(self):
+                self.calls = []
+
+            def ctrl_transfer(self, bm_request_type, request, w_value, w_index, length, timeout):
+                self.calls.append((bm_request_type, request, w_value, w_index, length, timeout))
+                return [0x16]
+
+        dev = FakeDevice()
+        result = read_config_request(dev, "device_flags", timeout_ms=250).as_dict()
+
+        assert dev.calls == [(0xC0, 0xE2, 0, 0, 1, 250)]
+        assert result["payloadHex"] == "16"
+        assert result["parsed"]["performance_mode"] is True
+
+    def test_mi00_probe_reports_transfer_failures_as_probe_errors(self):
+        class FailingDevice:
+            def ctrl_transfer(self, *args, **kwargs):
+                raise OSError("backend unavailable")
+
+        with pytest.raises(Mi00ProbeError, match="input_status"):
+            read_config_request(FailingDevice(), "input_status")
+
+    def test_parse_and_build_config_flags(self):
+        """Documents recovered MI_00 requests 0xE2/0xE3 device flag bits."""
+        parsed = EpiphanKVM_SDK.parse_config_flags(0x16)
+
+        assert parsed == {
+            "raw": 0x16,
+            "preserve_aspect_ratio": True,
+            "performance_mode": True,
+            "audio_selector_multichannel": True,
+            "unknown_bits": 0,
+        }
+        assert EpiphanKVM_SDK.parse_config_flags(0x17)["unknown_bits"] == 0x01
+        assert EpiphanKVM_SDK.build_config_flags(
+            preserve_aspect_ratio=True,
+            performance_mode=False,
+            audio_selector_multichannel=True,
+        ) == 0x12
+
+    def test_parse_and_build_config_user_mode(self):
+        """Documents recovered MI_00 request 0xB3 UserMode records."""
+        assert EpiphanKVM_SDK.parse_config_user_mode([0x80, 0x07, 0x38, 0x04, 0x00]) == {
+            "width": 1920,
+            "height": 1080,
+            "enabled": True,
+            "disabled_byte": 0,
+        }
+        assert EpiphanKVM_SDK.parse_config_user_mode([0x80, 0x07, 0x38, 0x04, 0x01])["enabled"] is False
+        assert EpiphanKVM_SDK.build_config_user_mode(1920, 1080, enabled=False) == [
+            0x80,
+            0x07,
+            0x38,
+            0x04,
+            0x01,
+        ]
+        assert EpiphanKVM_SDK.build_config_user_mode(-1, 70000) == [0, 0, 0xFF, 0xFF, 0]
+
+    def test_parse_fx3_image_records_and_transfer_chunks(self):
+        """Documents the recovered Cypress FX3 record/checksum container."""
+        record_data = (
+            (0x11111111).to_bytes(4, "little")
+            + (0x22222222).to_bytes(4, "little")
+            + (0x33333333).to_bytes(4, "little")
+        )
+        checksum = sum(
+            int.from_bytes(record_data[i:i + 4], "little")
+            for i in range(0, len(record_data), 4)
+        )
+        image_bytes = (
+            b"CY"
+            + bytes([0x1C, 0xB0])
+            + (3).to_bytes(4, "little")
+            + (0x40003000).to_bytes(4, "little")
+            + record_data
+            + (0).to_bytes(4, "little")
+            + (0x40000100).to_bytes(4, "little")
+            + checksum.to_bytes(4, "little")
+        )
+
+        image = parse_fx3_image(image_bytes)
+
+        assert image.image_control == 0x1C
+        assert image.image_type == 0xB0
+        assert image.entry_address == 0x40000100
+        assert image.checksum_valid is True
+        assert image.records[0].word_count == 3
+        chunks = list(image.iter_transfer_chunks(max_chunk_size=8))
+        assert [(chunk.address, len(chunk.data), chunk.w_value, chunk.w_index) for chunk in chunks] == [
+            (0x40003000, 8, 0x3000, 0x4000),
+            (0x40003008, 4, 0x3008, 0x4000),
+        ]
+
+    def test_parse_fpga_bitstream_sync_word(self):
+        """Documents the recovered FPGA bitstream sync-word location."""
+        bitstream = parse_fpga_bitstream(b"\xff" * 16 + bytes.fromhex("55 99 aa 66") + b"\x01\x02")
+
+        assert bitstream.has_sync_word is True
+        assert bitstream.sync_offset == 16
+        assert bitstream.sync_word == bytes.fromhex("55 99 aa 66")
+        assert bitstream.preamble == b"\xff" * 16
+        assert bitstream.payload.startswith(bytes.fromhex("55 99 aa 66"))
+
+    def test_spartan6_packet_decoder_normalizes_bit_reversed_bytes(self):
+        """Covers the Xilinx packet preamble observed in kvm2usb3.bin."""
+        canonical = bytes.fromhex("aa 99 55 66 30 00 80 01 00 00 00 0d")
+        reverse_table = bytes(int(f"{byte:08b}"[::-1], 2) for byte in range(256))
+        bit_reversed = bytes(reverse_table[byte] for byte in canonical)
+        bitstream = parse_fpga_bitstream(bit_reversed)
+
+        assert normalize_fpga_payload(bitstream).startswith(bytes.fromhex("aa 99 55 66"))
+        packets = list(iter_fpga_packets(bitstream))
+
+        assert packets[0].packet_type == 1
+        assert packets[0].opcode == "write"
+        assert packets[0].word_count == 1
+        assert packets[0].data_words_preview == (0x0000000D,)
+        assert summarize_fpga_packets(bitstream)["register_counts"] == {"CMD": 1}
+
+    def test_inspect_epiphan_firmware_payload_summarizes_fx3_image(self):
+        record_data = (0x11111111).to_bytes(4, "little")
+        image_bytes = (
+            b"CY"
+            + bytes([0x1C, 0xB0])
+            + (1).to_bytes(4, "little")
+            + (0x40003000).to_bytes(4, "little")
+            + record_data
+            + (0).to_bytes(4, "little")
+            + (0x40000100).to_bytes(4, "little")
+            + (0x11111111).to_bytes(4, "little")
+        )
+
+        summary = inspect_payload("kvm2usb3.img", image_bytes)
+
+        assert summary["kind"] == "fx3_image"
+        assert summary["checksum_valid"] is True
+        assert summary["record_count"] == 1
+        assert summary["records"] == [{"address": 0x40003000, "word_count": 1, "byte_count": 4}]
+
+    def test_trace_replay_summarizes_experiment_directory(self, tmp_path):
+        (tmp_path / "descriptors.json").write_text(
+            json.dumps(
+                {
+                    "device": {
+                        "vid": "2b77",
+                        "pid": "3661",
+                        "manufacturer": "Epiphan",
+                        "product": "KVM2USB 3.0",
+                    },
+                    "configurations": [{"interfaces": [{"number": 0}, {"number": 1}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "device-status.json").write_text('{"resolution":"1920x1080"}', encoding="utf-8")
+        (tmp_path / "host-log.jsonl").write_text('{"event":"open"}\n{"event":"close"}\n', encoding="utf-8")
+
+        replay = TraceReplay(tmp_path)
+
+        assert replay.descriptor_summary() == {
+            "vid": "2b77",
+            "pid": "3661",
+            "manufacturer": "Epiphan",
+            "product": "KVM2USB 3.0",
+            "interface_count": 2,
+        }
+        assert replay.device_status() == {"resolution": "1920x1080"}
+        assert [entry["event"] for entry in replay.iter_jsonl()] == ["open", "close"]
+
+    def test_trace_replay_summarizes_flat_mi00_descriptor_shape(self, tmp_path):
+        (tmp_path / "descriptors.json").write_text(
+            json.dumps(
+                {
+                    "vid": 0x2B77,
+                    "pid": 0x3661,
+                    "manufacturer": "Epiphan Systems Inc.",
+                    "product": "KVM2USB 3.0",
+                    "interfaces": [{"interface": 0}, {"interface": 1}, {"interface": 2}, {"interface": 3}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert TraceReplay(tmp_path).descriptor_summary() == {
+            "vid": "2b77",
+            "pid": "3661",
+            "manufacturer": "Epiphan Systems Inc.",
+            "product": "KVM2USB 3.0",
+            "interface_count": 4,
+        }
+
+    def test_trace_replay_reads_mi00_status(self, tmp_path):
+        (tmp_path / "mi00-status.json").write_text(
+            json.dumps({"available": True, "requests": {"input_status": {"parsed": {"width": 1920}}}}),
+            encoding="utf-8",
+        )
+
+        assert TraceReplay(tmp_path).mi00_status()["requests"]["input_status"]["parsed"]["width"] == 1920
+
+    def test_mi00_experiment_metadata_writer(self, tmp_path):
+        metadata_path = tmp_path / "metadata.yaml"
+        write_metadata(
+            metadata_path,
+            {
+                "experiment": {
+                    "id": "mi00-readonly-test",
+                    "objective": "unit test",
+                    "operator": "tester",
+                    "date": "2026-08-03",
+                    "git_commit": "abc123",
+                    "outputs": ["device-status.json"],
+                    "output_hashes": {"device-status.json": "deadbeef"},
+                    "result": "captured",
+                }
+            },
+        )
+
+        text = metadata_path.read_text(encoding="utf-8")
+        assert "id: \"mi00-readonly-test\"" in text
+        assert "device-status.json: deadbeef" in text
+
+    def test_mi00_experiment_default_id_is_stable(self):
+        now = datetime.datetime(2026, 8, 3, 4, 5, 6, tzinfo=datetime.timezone.utc)
+        assert default_experiment_id(now) == "mi00-readonly-20260803T040506Z"
+
+    def test_parse_epiphan_text_edid_and_checksum(self):
+        base = bytearray(128)
+        base[:8] = bytes.fromhex("00 ff ff ff ff ff ff 00")
+        base[8:10] = bytes.fromhex("16 08")
+        base[10:12] = (0x3661).to_bytes(2, "little")
+        base[18] = 1
+        base[19] = 3
+        name = b"KVM2USB 3.0\n"
+        base[54:72] = b"\x00\x00\x00\xfc\x00" + name + b" " * (13 - len(name))
+        base[127] = (-sum(base[:127])) & 0xFF
+        edid_text = "0000 | " + " ".join(f"{byte:02X}" for byte in base[:16]) + "\n"
+        for offset in range(16, 128, 16):
+            edid_text += f"{offset:04X} | " + " ".join(f"{byte:02X}" for byte in base[offset:offset + 16]) + "\n"
+
+        raw = parse_epiphan_text_edid(edid_text)
+        summary = summarize_edid(raw)
+
+        assert raw == bytes(base)
+        assert summary.checksums_valid is True
+        assert summary.manufacturer_id == "EPH"
+        assert summary.product_code == 0x3661
+        assert summary.version == "1.3"
+        assert summary.monitor_name == "KVM2USB 3.0"
 
     def test_runtime_session_directory_groups_outputs(self, sdk):
         """Ensures runtime outputs are correlated under a per-session directory."""
@@ -167,6 +873,22 @@ class TestEpiphanKVM_Enhanced:
         assert str(sdk.session_dir.resolve()) in log_path
         assert os.path.exists(screenshot)
         assert os.path.exists(log_path)
+
+    def test_runtime_session_root_can_be_overridden(self, tmp_path):
+        sdk = EpiphanKVM_SDK(runtime_root=tmp_path)
+        try:
+            assert sdk.session_dir.parent == tmp_path
+            assert sdk.config_path.parent == sdk.session_dir
+        finally:
+            sdk.close()
+
+    def test_runtime_session_root_can_come_from_environment(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENTKVM2USB_SESSION_ROOT", str(tmp_path))
+        sdk = EpiphanKVM_SDK()
+        try:
+            assert sdk.session_dir.parent == tmp_path
+        finally:
+            sdk.close()
 
     # --- 3. PRESET & CONFIG PERSISTENCE ---
 
@@ -260,6 +982,37 @@ class TestKvmAppGUI:
             def get_processed_frame(self):
                 return None
 
+            def get_config_status(self):
+                return {
+                    "available": True,
+                    "error": None,
+                    "requests": {
+                        "input_status": {
+                            "parsed": {
+                                "label": "RGB 1920x1080p@60.318, HDMI",
+                                "source": "RGB",
+                                "mode_name": "HDMI",
+                            }
+                        },
+                        "device_flags": {"parsed": {"raw": 0xFE}},
+                        "user_mode": {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                    },
+                    "user_modes": [
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                    ],
+                }
+
+            def set_capture_compression_request(self, checked):
+                return {
+                    "success": False,
+                    "requested_fourcc": "MJPG",
+                    "actual_fourcc": "YUY2",
+                    "changed": False,
+                    "error": "capture backend did not accept requested FOURCC",
+                }
+
             def reenumerate_target(self):
                 pass
 
@@ -313,6 +1066,103 @@ class TestKvmAppGUI:
         assert window.show_host_cursor is False
         window.toggle_cursor_vis(True)
         assert window.show_host_cursor is True
+
+    def test_read_config_status_shows_mi00_summary(self, window, mocker):
+        import kvmapp_gui
+
+        info = mocker.patch.object(kvmapp_gui.QMessageBox, "information")
+        window.read_config_status()
+
+        assert "RGB 1920x1080p@60.318, HDMI" in info.call_args[0][2]
+        assert "User mode 3: 65535x65535, disabled" in info.call_args[0][2]
+
+    def test_capture_compression_action_rolls_back_when_backend_refuses(self, window):
+        window.perf_act.setChecked(True)
+        window.toggle_capture_compression(True)
+
+        assert window.perf_act.isChecked() is False
+
+
+class TestHardwareProbeHelpers:
+    def test_frame_stats_identifies_nonblank_frame(self):
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        frame[2:5, 2:5] = 255
+
+        stats = frame_stats(frame)
+
+        assert stats["shape"] == [10, 10, 3]
+        assert stats["max"] == 255
+        assert stats["nonBlackRatio"] == 0.09
+
+    def test_effective_signal_prefers_hid_but_accepts_visible_frame(self):
+        status = {"is_signal_active": False}
+        stats = {"nonBlackRatio": 0.09, "max": 255}
+
+        assert effective_signal(status, stats) == {
+            "active": True,
+            "hidActive": False,
+            "mi00Active": False,
+            "framePresent": True,
+            "frameNonBlank": True,
+            "reason": "frame_content",
+        }
+
+    def test_effective_signal_accepts_mi00_status(self):
+        status = {"is_signal_active": False}
+        mi00 = {"requests": {"input_status": {"parsed": {"is_signal_active": True}}}}
+
+        assert effective_signal(status, None, mi00) == {
+            "active": True,
+            "hidActive": False,
+            "mi00Active": True,
+            "framePresent": False,
+            "frameNonBlank": False,
+            "reason": "mi00_report",
+        }
+
+    def test_effective_signal_accepts_sparse_firmware_text(self):
+        status = {"is_signal_active": False}
+        stats = {"nonBlackRatio": 0.000869, "max": 255}
+
+        assert effective_signal(status, stats)["active"] is True
+        assert effective_signal(status, stats)["reason"] == "frame_content"
+
+    def test_effective_signal_reports_blank_frame(self):
+        status = {"is_signal_active": False}
+        stats = {"nonBlackRatio": 0.0, "max": 0}
+
+        assert effective_signal(status, stats) == {
+            "active": False,
+            "hidActive": False,
+            "mi00Active": False,
+            "framePresent": True,
+            "frameNonBlank": False,
+            "reason": "blank_frame",
+        }
+
+    def test_parse_dshow_options_deduplicates_modes(self):
+        text = """
+        pixel_format=yuyv422  min s=1920x1080 fps=15 max s=1920x1080 fps=60.0002
+        pixel_format=yuyv422  min s=1920x1080 fps=15 max s=1920x1080 fps=60.0002 (tv, bt709/bt709/unknown, topleft)
+        pixel_format=yuyv422  min s=640x480 fps=15 max s=640x480 fps=60.0002
+        """
+
+        assert parse_dshow_options(text) == [
+            {
+                "pixelFormat": "yuyv422",
+                "width": 1920,
+                "height": 1080,
+                "minFps": 15.0,
+                "maxFps": 60.0002,
+            },
+            {
+                "pixelFormat": "yuyv422",
+                "width": 640,
+                "height": 480,
+                "minFps": 15.0,
+                "maxFps": 60.0002,
+            },
+        ]
 
 if __name__ == "__main__":
     import pytest

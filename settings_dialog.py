@@ -129,6 +129,21 @@ class SettingsDialog(QDialog):
                           "DELAY 500 | TYPE hello | PRESS enter | HOTKEY ctrl alt delete | CLICK 0.5 0.5")
         help_text.setWordWrap(True)
         layout.addWidget(help_text)
+
+        library_layout = QHBoxLayout()
+        self.macro_combo = QComboBox()
+        self.refresh_macro_combo()
+        self.load_macro_btn = QPushButton("Load")
+        self.load_macro_btn.clicked.connect(self.load_named_macro)
+        self.save_macro_btn = QPushButton("Save As...")
+        self.save_macro_btn.clicked.connect(self.save_named_macro)
+        self.delete_macro_btn = QPushButton("Delete")
+        self.delete_macro_btn.clicked.connect(self.delete_named_macro)
+        library_layout.addWidget(self.macro_combo, 1)
+        library_layout.addWidget(self.load_macro_btn)
+        library_layout.addWidget(self.save_macro_btn)
+        library_layout.addWidget(self.delete_macro_btn)
+        layout.addLayout(library_layout)
         
         self.macro_edit = QTextEdit()
         self.macro_edit.setPlaceholderText("# Enter macro script here...\nDELAY 500\nTYPE Admin123\nPRESS enter")
@@ -138,15 +153,64 @@ class SettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         self.run_macro_btn = QPushButton("Run Macro (Immediate)")
         self.run_macro_btn.clicked.connect(self.run_macro_logic)
+        self.validate_macro_btn = QPushButton("Validate")
+        self.validate_macro_btn.clicked.connect(self.validate_macro_logic)
         
         self.clear_macro_btn = QPushButton("Clear")
         self.clear_macro_btn.clicked.connect(self.macro_edit.clear)
         
         btn_layout.addWidget(self.run_macro_btn)
+        btn_layout.addWidget(self.validate_macro_btn)
         btn_layout.addWidget(self.clear_macro_btn)
         layout.addLayout(btn_layout)
         
         return page
+
+    def refresh_macro_combo(self):
+        if not hasattr(self, "macro_combo"):
+            return
+        current = self.macro_combo.currentText()
+        self.macro_combo.clear()
+        self.macro_combo.addItems(self.sdk.list_macros())
+        index = self.macro_combo.findText(current)
+        if index >= 0:
+            self.macro_combo.setCurrentIndex(index)
+
+    def load_named_macro(self):
+        name = self.macro_combo.currentText()
+        script = self.sdk.get_macro(name)
+        if script is None:
+            return
+        self.macro_edit.setPlainText(script)
+
+    def save_named_macro(self):
+        script = self.macro_edit.toPlainText()
+        if not script.strip():
+            QMessageBox.warning(self, "Macro", "No macro script is available to save.")
+            return
+        name, ok = QInputDialog.getText(self, "Save Macro", "Macro name:")
+        if ok and name.strip():
+            self.sdk.save_macro(name, script)
+            self.refresh_macro_combo()
+            index = self.macro_combo.findText(name.strip())
+            if index >= 0:
+                self.macro_combo.setCurrentIndex(index)
+
+    def delete_named_macro(self):
+        name = self.macro_combo.currentText()
+        if not name:
+            return
+        if QMessageBox.question(self, "Delete Macro", f"Delete macro '{name}'?") == QMessageBox.Yes:
+            self.sdk.delete_macro(name)
+            self.refresh_macro_combo()
+
+    def validate_macro_logic(self):
+        result = self.sdk.validate_macro(self.macro_edit.toPlainText())
+        if result["success"]:
+            QMessageBox.information(self, "Macro", f"Macro is valid. Commands: {len(result['executed'])}")
+            return
+        first_error = result["errors"][0]
+        QMessageBox.warning(self, "Macro", f"Line {first_error['line']}: {first_error['message']}")
 
     def run_macro_logic(self):
         script = self.macro_edit.toPlainText()

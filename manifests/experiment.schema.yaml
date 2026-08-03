@@ -1,0 +1,47 @@
+# Schema for reproducible hardware and reverse-engineering experiments.
+required:
+  - experiment
+fields:
+  experiment:
+    required:
+      - id
+      - objective
+      - operator
+      - date
+      - git_commit
+      - result
+    fields:
+      id:
+        type: string
+      objective:
+        type: string
+      operator:
+        type: string
+      date:
+        type: string
+        format: yyyy-mm-dd
+      git_commit:
+        type: string
+      environment_lock:
+        type: string
+        nullable: true
+      device_serial:
+        type: string
+        nullable: true
+      input_artifacts:
+        type: array
+        items: artifact_id
+      commands:
+        type: array
+        items: string
+      outputs:
+        type: array
+        items: string
+      output_hashes:
+        type: object
+      result:
+        type: string
+      interpretation:
+        type: string
+      follow_up:
+        type: string

@@ -5,3 +5,4 @@ PySide6
 pytest
 pytest-mock
 pygrabber
+pyusb

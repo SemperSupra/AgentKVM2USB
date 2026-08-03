@@ -73,11 +73,27 @@ sdk.close()
 - `test_sdk.py`: Test suite (supports hardware & mock testing).
 - `PROJECT_STATUS.md`: Current triage, validation results, known gaps, and phased remediation strategy.
 - `HARDWARE_REPORT.md`: Reverse-engineering documentation and component analysis.
+- `VIDEO_PIPELINE.md`: Current physical, HID, UVC, DirectShow, and OpenCV video pipeline findings.
+- `VENDOR_ARTIFACTS.md`: Official Epiphan download inventory, hashes, extracted package notes, and reverse-engineering leads.
+- `RECOVERED_CAPABILITIES.md`: App, driver, firmware, HID, and config-interface capability matrix recovered from official artifacts.
+- `FIRMWARE_UPDATE_RECOVERY.md`: Offline firmware, FPGA, update-container, checksum, and transfer-plan recovery notes.
+- `OPENKVM2USB_STRATEGY.md`: Long-term clean-room strategy for an open host, protocol, FX3 firmware, and Spartan-6 FPGA stack.
+- `manifests/`: Public metadata schemas and document acquisition checklists for private evidence and reproducibility records.
 - `BACKLOG.md`: Development roadmap and protocol research notes.
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
 - `MACROS.md`: Documentation for the Macro Engine DSL.
 - `PACKAGING.md`: Local Windows artifact, release, and Package Foundry guidance.
 - `scripts/`: Local portable-build and GitHub Release scripts.
+- `scripts/inspect_epiphan_firmware.py`: Offline parser for Epiphan `.fw`,
+  FX3 `.img`, FPGA `.bin`, EDID text dumps, and package metadata.
+- `scripts/inspect_epiphan_config.py`: Offline recovered MI_00 request map and
+  config-payload parser.
+- `scripts/probe_mi00_config.py`: Guarded live read-only MI_00 WinUSB/libusb
+  probe for input status, user modes, and device flags.
+- `scripts/capture_mi00_experiment.py`: Captures a deterministic read-only
+  MI_00 experiment directory for replay and USBPcap correlation.
+- `scripts/summarize_trace.py`: Summarizes deterministic experiment trace
+  directories for no-hardware replay.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:
@@ -107,6 +123,50 @@ To emit machine-consumable hardware diagnostics:
 ```bash
 python hardware_probe.py --capture
 ```
+
+To include guarded read-only MI_00 config-interface diagnostics after the
+official WinUSB INF is bound:
+
+```bash
+python hardware_probe.py --include-mi00 --libusb-dll path\to\libusb-1.0.dll
+```
+
+To capture a replayable read-only MI_00 experiment under `.work/experiments/`:
+
+```bash
+python scripts/capture_mi00_experiment.py --libusb-dll path\to\libusb-1.0.dll
+```
+
+Runtime captures, logs, and per-run config can be redirected with either:
+
+```bash
+set AGENTKVM2USB_SESSION_ROOT=C:\KVM-Lab\Sessions
+python hardware_probe.py --runtime-root C:\KVM-Lab\Sessions
+```
+
+Named macros are stored in the user profile. Override that location with:
+
+```bash
+set AGENTKVM2USB_PROFILE_ROOT=C:\KVM-Lab\Profile
+```
+
+## Headless JSON API
+
+Run a local agent API without GUI:
+
+```bash
+python scripts/run_headless_api.py --host 127.0.0.1 --port 8765
+```
+
+Endpoints:
+
+- `GET /status`
+- `GET /health?include_mi00=1`
+- `GET /frame?include_image=1`
+- `GET /macros`
+- `POST /macro` with `{"script":"PRESS enter","dry_run":true}`
+- `POST /named-macro` with `{"name":"Boot Menu","dry_run":true}`
+- `POST /macro/validate` with `{"script":"PRESS enter"}`
 
 ## Contributing
 Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.

@@ -1,0 +1,48 @@
+# Schema for private evidence-vault artifacts.
+# This public schema contains metadata fields only. Do not store restricted
+# binaries or captures in this repository.
+required:
+  - artifact_id
+  - filename
+  - sha256
+  - size
+  - source
+  - acquisition_date
+  - redistributable
+fields:
+  artifact_id:
+    type: string
+    description: Stable content or inventory identifier.
+  filename:
+    type: string
+  sha256:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+  size:
+    type: integer
+    units: bytes
+  source:
+    type: string
+    description: URL, device, capture setup, or storage origin.
+  acquisition_date:
+    type: string
+    format: yyyy-mm-dd
+  device_serial:
+    type: string
+    nullable: true
+  device_role:
+    type: string
+    enum: [gold_reference, recovery_unit, sacrificial_unit, development_board, host_only, unknown]
+  operator:
+    type: string
+  method:
+    type: string
+  license:
+    type: string
+  redistributable:
+    type: boolean
+  experiment_id:
+    type: string
+    nullable: true
+  notes:
+    type: string

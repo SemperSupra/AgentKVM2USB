@@ -6,9 +6,14 @@ import numpy as np
 import threading
 import subprocess
 from PySide6.QtCore import Qt, QTimer, QSize, QPoint
-from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor, QPalette
+from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor, QPalette, QPainter
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                              QWidget, QStatusBar, QToolBar, QFileDialog, QMessageBox, QStyle)
+try:
+    from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+except Exception:
+    QPrintDialog = None
+    QPrinter = None
 from epiphan_sdk import EpiphanKVM_SDK
 from settings_dialog import SettingsDialog
 
@@ -92,6 +97,7 @@ class KvmAppGUI(QMainWindow):
         file_m = mb.addMenu("&File")
         file_m.addAction("&Save Still Image...", self.save_screenshot, QKeySequence.Save)
         file_m.addAction("&Copy Still Image to Buffer", self.copy_to_clipboard, "Ctrl+C")
+        file_m.addAction("&Print Still Image...", self.print_current_frame, QKeySequence.Print)
         file_m.addSeparator()
         file_m.addAction("Cleanup Old Session Data...", self.cleanup_data)
         file_m.addSeparator()
@@ -113,6 +119,10 @@ class KvmAppGUI(QMainWindow):
         tools_m = mb.addMenu("&Tools")
         tools_m.addAction("Send Ctrl+Alt+Del", lambda: self.sdk.hotkey("ctrl", "alt", "delete"))
         tools_m.addAction("Send Alt+Tab", lambda: self.sdk.hotkey("alt", "tab"))
+        tools_m.addAction("Send Alt+Space", lambda: self.sdk.hotkey("alt", "space"))
+        tools_m.addAction("Send GUI/Windows Key", lambda: self.sdk.hotkey("gui"))
+        tools_m.addSeparator()
+        tools_m.addAction("Read Config Status", self.read_config_status)
         tools_m.addSeparator()
         self.rec_act = tools_m.addAction("Start &Recording session", self.toggle_recording)
         
@@ -144,7 +154,7 @@ class KvmAppGUI(QMainWindow):
         self.abs_act.setCheckable(True)
         
         opt_m.addSeparator()
-        self.perf_act = opt_m.addAction("&Performance Mode", lambda: self.sdk.set_performance_mode(self.perf_act.isChecked()))
+        self.perf_act = opt_m.addAction("Request &MJPG Capture", self.toggle_capture_compression)
         self.perf_act.setCheckable(True)
         opt_m.addAction("&Reconnect Remote USB", self.sdk.reenumerate_target)
         opt_m.addSeparator()
@@ -218,10 +228,16 @@ class KvmAppGUI(QMainWindow):
         self.status.showMessage(f"Switched to {name}", 3000)
 
     def update_status(self):
-        state = self.sdk.get_status()
+        health = self.sdk.get_device_health()
+        state = health["status"]
         l = state['leds']
         led_str = f"LEDs: [{'C' if l['caps'] else '-'}{'N' if l['num'] else '-'}{'S' if l['scroll'] else '-'}]"
-        sig_str = "SIGNAL OK" if state['is_signal_active'] else "NO SIGNAL"
+        effective = health["effective_signal"]
+        sig_str = "SIGNAL OK" if effective["active"] else "NO SIGNAL"
+        if effective["frame_stale"]:
+            sig_str += " / STALE FRAME"
+        elif not health["camera"]["opened"]:
+            sig_str += " / UVC CLOSED"
         motion_str = " | [MOTION]" if self.sdk.is_motion_detected and self.sdk.enable_motion_detection else ""
         self.status.showMessage(f"Mode: {self.mouse_mode.upper()} | Res: {state['resolution']} | {sig_str} | {led_str}{motion_str}")
 
@@ -280,9 +296,18 @@ class KvmAppGUI(QMainWindow):
     def mouseMoveEvent(self, event):
         if self.is_grabbed and self.mouse_mode == "absolute":
             lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
-            x_p = event.position().x() / lbl_w
-            y_p = event.position().y() / lbl_h
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            x_p = local_pos.x() / lbl_w
+            y_p = local_pos.y() / lbl_h
             self.sdk.click(x_p, y_p, button=0)
+        elif self.is_grabbed and self.mouse_mode == "relative":
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            delta = local_pos - self.video_label.rect().center()
+            dx = int(delta.x())
+            dy = int(delta.y())
+            if dx or dy:
+                self.sdk.move_mouse_relative(dx, dy)
+                QCursor.setPos(self.video_label.mapToGlobal(self.video_label.rect().center()))
 
     def mousePressEvent(self, event):
         if not self.is_grabbed:
@@ -290,9 +315,19 @@ class KvmAppGUI(QMainWindow):
             return
             
         btn = 1 if event.button() == Qt.LeftButton else 2
-        x_p = event.position().x() / self.video_label.width()
-        y_p = event.position().y() / self.video_label.height()
-        self.sdk.click(x_p, y_p, button=btn)
+        if self.mouse_mode == "relative":
+            self.sdk.mouse_click_relative(btn)
+        else:
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            x_p = local_pos.x() / self.video_label.width()
+            y_p = local_pos.y() / self.video_label.height()
+            self.sdk.click(x_p, y_p, button=btn)
+
+    def wheelEvent(self, event):
+        if self.is_grabbed:
+            steps = event.angleDelta().y() // 120
+            if steps:
+                self.sdk.scroll_mouse(steps)
 
     # --- ACTIONS ---
 
@@ -319,6 +354,16 @@ class KvmAppGUI(QMainWindow):
         self.rel_act.setChecked(mode == "relative")
         self.abs_act.setChecked(mode == "absolute")
 
+    def toggle_capture_compression(self, checked):
+        result = self.sdk.set_capture_compression_request(checked)
+        requested = result.get("requested_fourcc")
+        actual = result.get("actual_fourcc") or "unknown"
+        if result.get("success"):
+            self.status.showMessage(f"Capture format set to {actual}", 3000)
+            return
+        self.perf_act.setChecked(actual == "MJPG")
+        self.status.showMessage(f"{requested} not accepted; capture remains {actual}", 5000)
+
     def copy_to_clipboard(self):
         with self.sdk._lock:
             if self.sdk.latest_frame is not None:
@@ -327,6 +372,58 @@ class KvmAppGUI(QMainWindow):
                 qi = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
                 QGuiApplication.clipboard().setImage(qi)
                 self.status.showMessage("Frame copied to clipboard", 3000)
+
+    def print_current_frame(self):
+        if QPrintDialog is None or QPrinter is None:
+            QMessageBox.warning(self, "Print Unavailable", "Qt print support is not available in this environment.")
+            return
+        frame = self.sdk.get_processed_frame()
+        if frame is None:
+            QMessageBox.warning(self, "Print", "No frame is available to print.")
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        image = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888).copy()
+        high_resolution = getattr(getattr(QPrinter, "PrinterMode", QPrinter), "HighResolution")
+        printer = QPrinter(high_resolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() != QPrintDialog.Accepted:
+            return
+        painter = QPainter(printer)
+        viewport = painter.viewport()
+        scaled = image.scaled(viewport.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawImage((viewport.width() - scaled.width()) // 2, (viewport.height() - scaled.height()) // 2, scaled)
+        painter.end()
+        self.status.showMessage("Frame sent to printer", 3000)
+
+    def read_config_status(self):
+        config = self.sdk.get_config_status()
+        if not config.get("available"):
+            message = config.get("error") or "MI_00 config status is unavailable."
+            QMessageBox.warning(self, "Config Status", message)
+            return
+
+        requests = config.get("requests", {})
+        input_status = (requests.get("input_status") or {}).get("parsed") or {}
+        flags = (requests.get("device_flags") or {}).get("parsed") or {}
+        user_modes = config.get("user_modes") or [requests.get("user_mode")]
+        user_mode_lines = []
+        for index, mode_entry in enumerate(user_modes):
+            user_mode = (mode_entry or {}).get("parsed") or {}
+            user_mode_lines.append(
+                f"User mode {index + 1}: {user_mode.get('width', 'unknown')}x"
+                f"{user_mode.get('height', 'unknown')}, "
+                f"{'enabled' if user_mode.get('enabled') else 'disabled'}"
+            )
+        lines = [
+            f"Input: {input_status.get('label', 'unknown')}",
+            f"Source: {input_status.get('source', 'unknown')}",
+            f"Mode: {input_status.get('mode_name', 'unknown')}",
+            f"Flags: 0x{int(flags.get('raw', 0)):02x}",
+            *user_mode_lines,
+        ]
+        QMessageBox.information(self, "Config Status", "\n".join(lines))
+        self.status.showMessage("Read MI_00 config status", 3000)
 
     def save_screenshot(self):
         path = self.sdk.get_screen(prefix=self.user_prefix)
