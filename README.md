@@ -77,6 +77,8 @@ sdk.close()
 - `VENDOR_ARTIFACTS.md`: Official Epiphan download inventory, hashes, extracted package notes, and reverse-engineering leads.
 - `RECOVERED_CAPABILITIES.md`: App, driver, firmware, HID, and config-interface capability matrix recovered from official artifacts.
 - `FIRMWARE_UPDATE_RECOVERY.md`: Offline firmware, FPGA, update-container, checksum, and transfer-plan recovery notes.
+- `OPENKVM2USB_STRATEGY.md`: Long-term clean-room strategy for an open host, protocol, FX3 firmware, and Spartan-6 FPGA stack.
+- `manifests/`: Public metadata schemas and document acquisition checklists for private evidence and reproducibility records.
 - `BACKLOG.md`: Development roadmap and protocol research notes.
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
 - `MACROS.md`: Documentation for the Macro Engine DSL.

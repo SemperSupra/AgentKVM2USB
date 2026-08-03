@@ -3,6 +3,8 @@
 This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap) for implementation.
 
 ## Device Investigation Priorities
+- [ ] **Program Separation:** Keep PR `#6` scoped to packaging baseline work, then create the private evidence vault and public clean `OpenKVM2USB` repository described in `OPENKVM2USB_STRATEGY.md`.
+- [ ] **Provenance Manifests:** Use `manifests/artifact.schema.yaml`, `manifests/experiment.schema.yaml`, and `manifests/environment.schema.yaml` for evidence-vault and reproducible-build records.
 - [x] **Live Mode HID Report:** Map the observed KVM2USB 3.0 live mode report. Usage `0x103`, feature report `3`, returns `width_le16`, `height_le16`, and an active flag. Verified with `1920x1080 active`.
 - [x] **Structured Hardware Probe v2:** Extend `hardware_probe.py` to emit HID collection metadata, status source, UVC ownership/open state, frame statistics, and effective signal inference in one JSON document.
 - [x] **Initial UVC / DirectShow Capability Map:** Enumerate supported formats, resolutions, frame rates, actual backend, FOURCC, and camera-open failure cases. Prefer stable camera selection by device name over index. See `VIDEO_PIPELINE.md`.

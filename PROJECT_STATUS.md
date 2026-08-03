@@ -2,6 +2,11 @@
 
 Last reviewed: 2026-08-02
 
+Program strategy update reviewed: 2026-08-03. Long-term open-stack work is now
+tracked in `OPENKVM2USB_STRATEGY.md`; public metadata schemas for artifacts,
+experiments, environments, and vendor-document acquisition are under
+`manifests/`.
+
 ## Repository Triage
 
 - Active branch: `package-foundry/public-deployment-readiness`.
@@ -59,6 +64,7 @@ Observed:
 - The official `kvm2usb3-sandbox.img` has 5 valid FX3 records, 51 transfer chunks, entry `0x400207a4`, checksum `0x2f1dea7f`, and SHA256 `f744a812c62208812392d9f085bbfe6f3184a3871c339e21487d6ab2e246e07d`.
 - The official FPGA payload `kvm2usb3.bin` has SHA256 `0b917e5ba03ff745c5bb7d09aceec29d255bb72e7027a0fd65c49334e5533d8b` and a Xilinx-style sync word `55 99 aa 66` at offset `0x10`. Packet-level FPGA bitstream decoding remains open.
 - Detailed firmware/update recovery notes are tracked in `FIRMWARE_UPDATE_RECOVERY.md`.
+- Long-term clean-room recovery and recreation strategy is tracked in `OPENKVM2USB_STRATEGY.md`.
 - Linux AppImage disassembly confirms HID reports for keyboard (`1`, 9 bytes), mouse (`2`, 5 bytes), touch (`5`, 7 bytes), input size/status feature read (`3`, 6 bytes), touch type feature write (`6`, 2 bytes), and slave re-enumeration feature write (`7`, 2 bytes).
 - Linux KVM app disassembly confirms firmware/version display is read with `hid_get_indexed_string()` at USB string index `3`, not through a custom HID report.
 - Live SDK verification read USB string index `3` as firmware version `4.0.0.39896`.

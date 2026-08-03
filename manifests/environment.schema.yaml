@@ -1,0 +1,38 @@
+# Schema for manually acquired vendor tools and reproducible build environments.
+required:
+  - name
+  - version
+  - redistributable
+  - manualDownloadRequired
+fields:
+  name:
+    type: string
+  version:
+    type: string
+  redistributable:
+    type: boolean
+  manualDownloadRequired:
+    type: boolean
+  expectedFilename:
+    type: string
+  sha256:
+    type: string
+    nullable: true
+  source:
+    type: string
+  detectionCommand:
+    type: string
+  installInstructions:
+    type: string
+  license:
+    type: string
+  tool_versions:
+    type: object
+  environment_variables:
+    type: object
+  sample_build:
+    fields:
+      command:
+        type: string
+      output_hashes:
+        type: object
