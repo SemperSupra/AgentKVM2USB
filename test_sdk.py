@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import json
 import re
+import threading
 from epiphan_firmware import parse_epiphan_text_edid, parse_fpga_bitstream, parse_fx3_image, summarize_edid
 from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
@@ -276,6 +277,43 @@ class TestEpiphanKVM_Enhanced:
             "leds": {"caps": False, "num": False, "scroll": False},
             "signal_source": "touch_feature_3",
             "firmware_version": "4.0.0-r39896",
+        }
+
+    def test_get_device_health_combines_hid_camera_and_frame_state(self):
+        """Gives agents a single structured health model for signal decisions."""
+        class FakeCapture:
+            def isOpened(self):
+                return True
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.latest_frame = np.full((4, 4, 3), 255, dtype=np.uint8)
+        sdk.latest_frame_seq = 7
+        sdk.latest_frame_at = time.time()
+        sdk.current_camera_name = "KVM2USB 3.0"
+        sdk.cap = FakeCapture()
+        sdk.get_status = lambda: {
+            "resolution": "1920x1080",
+            "is_signal_active": True,
+            "leds": {"caps": False, "num": False, "scroll": False},
+            "signal_source": "touch_feature_3",
+            "firmware_version": "4.0.0-r39896",
+        }
+
+        health = sdk.get_device_health()
+
+        assert health["camera"] == {"name": "KVM2USB 3.0", "opened": True}
+        assert health["frame"]["present"] is True
+        assert health["frame"]["sequence"] == 7
+        assert health["frame"]["stale"] is False
+        assert health["frame"]["stats"]["non_black_ratio"] == 1.0
+        assert health["effective_signal"] == {
+            "active": True,
+            "hid_active": True,
+            "frame_present": True,
+            "frame_nonblank": True,
+            "frame_stale": False,
+            "reason": "hid_and_frame",
         }
 
     def test_parse_config_input_status_payload(self):

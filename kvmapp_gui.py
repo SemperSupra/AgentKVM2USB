@@ -226,10 +226,16 @@ class KvmAppGUI(QMainWindow):
         self.status.showMessage(f"Switched to {name}", 3000)
 
     def update_status(self):
-        state = self.sdk.get_status()
+        health = self.sdk.get_device_health()
+        state = health["status"]
         l = state['leds']
         led_str = f"LEDs: [{'C' if l['caps'] else '-'}{'N' if l['num'] else '-'}{'S' if l['scroll'] else '-'}]"
-        sig_str = "SIGNAL OK" if state['is_signal_active'] else "NO SIGNAL"
+        effective = health["effective_signal"]
+        sig_str = "SIGNAL OK" if effective["active"] else "NO SIGNAL"
+        if effective["frame_stale"]:
+            sig_str += " / STALE FRAME"
+        elif not health["camera"]["opened"]:
+            sig_str += " / UVC CLOSED"
         motion_str = " | [MOTION]" if self.sdk.is_motion_detected and self.sdk.enable_motion_detection else ""
         self.status.showMessage(f"Mode: {self.mouse_mode.upper()} | Res: {state['resolution']} | {sig_str} | {led_str}{motion_str}")
 

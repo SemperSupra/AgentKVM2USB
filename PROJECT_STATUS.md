@@ -112,6 +112,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Feature writes for touch type and slave re-enumeration are recovered and unit-tested offline, but still require a safe target session before live validation.
 - Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
+- `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar.
 - SDK configuration helpers are offline-only. They parse/build recovered MI_00 payloads but do not bind WinUSB or send raw USB control requests.
 - Firmware parser helpers are offline-only. They validate and plan image transfers but do not send update, repair, EDID, or flash commands.
 - Linux reverse engineering is valuable and has already recovered more functionality than the stripped Windows binaries. Mac software remains a secondary cross-check unless Linux and Windows disagree.

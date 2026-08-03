@@ -587,6 +587,77 @@ class EpiphanKVM_SDK:
             "firmware_version": self.get_firmware_version(),
         }
 
+    def get_device_health(self, stale_after_sec=2.0):
+        """Returns a structured HID/UVC/frame health model for agents and GUI."""
+        status = self.get_status()
+        with self._lock:
+            frame = self.latest_frame.copy() if self.latest_frame is not None else None
+            frame_seq = self.latest_frame_seq
+            frame_at = self.latest_frame_at
+
+        frame_age = time.time() - frame_at if frame_at else None
+        frame_stats = self._frame_health_stats(frame)
+        frame_present = frame_stats is not None
+        frame_stale = bool(frame_age is not None and frame_age > float(stale_after_sec))
+        frame_nonblank = bool(
+            frame_stats
+            and frame_stats["non_black_ratio"] >= 0.0001
+            and frame_stats["max"] > 10
+        )
+        hid_active = bool(status.get("is_signal_active"))
+        cap_opened = bool(self.cap and self.cap.isOpened())
+
+        return {
+            "status": status,
+            "camera": {
+                "name": self.current_camera_name,
+                "opened": cap_opened,
+            },
+            "frame": {
+                "present": frame_present,
+                "sequence": frame_seq,
+                "age_sec": round(frame_age, 3) if frame_age is not None else None,
+                "stale": frame_stale,
+                "stats": frame_stats,
+            },
+            "effective_signal": {
+                "active": hid_active or frame_nonblank,
+                "hid_active": hid_active,
+                "frame_present": frame_present,
+                "frame_nonblank": frame_nonblank,
+                "frame_stale": frame_stale,
+                "reason": self._effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale),
+            },
+        }
+
+    @staticmethod
+    def _frame_health_stats(frame):
+        if frame is None:
+            return None
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return {
+            "shape": list(frame.shape),
+            "mean": round(float(gray.mean()), 3),
+            "std": round(float(gray.std()), 3),
+            "min": int(gray.min()),
+            "max": int(gray.max()),
+            "non_black_ratio": round(float(np.count_nonzero(gray > 10) / gray.size), 6),
+        }
+
+    @staticmethod
+    def _effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale):
+        if hid_active and frame_nonblank and not frame_stale:
+            return "hid_and_frame"
+        if hid_active:
+            return "hid_report"
+        if frame_nonblank and not frame_stale:
+            return "frame_content"
+        if frame_stale:
+            return "stale_frame"
+        if frame_present:
+            return "blank_frame"
+        return "no_frame"
+
     def get_firmware_version(self):
         # Official KvmApp reads USB string descriptor index 3 via hidapi.
         for dev in (self.kb_dev, self.mouse_dev, self.touch_dev, self.sys_dev):

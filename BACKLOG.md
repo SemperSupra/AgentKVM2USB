@@ -15,7 +15,7 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [x] **Vendor Config Request Map:** Static disassembly confirms config requests `0xB2`, `0xB3`, `0xE2`, `0xE3`, and update/EDID requests including `0xA0`, `0xC4`, `0xC5`, and `0xD4`. `InputStatusInfo`, `UserMode`, and device flag payloads are mapped well enough for offline parsing/building. Next step is USBPcap confirmation of read-only official-tool actions before implementing a live probe.
 - [x] **FX3 Firmware Container Parser:** Add offline Cypress FX3 `.img` parsing, checksum validation, entry address recovery, and request `0xA0` chunk planning. See `FIRMWARE_UPDATE_RECOVERY.md`.
 - [ ] **FPGA Bitstream Packet Decoder:** Decode `kvm2usb3.bin` after the Xilinx sync word at offset `0x10`, including packet headers, CRC command, and end/desync sequence.
-- [ ] **Signal Health Model:** Distinguish HID-reported signal, UVC stream-open state, latest-frame presence, blank-frame detection, and stale-frame detection in SDK/GUI status.
+- [x] **Signal Health Model:** Distinguish HID-reported signal, UVC stream-open state, latest-frame presence, blank-frame detection, and stale-frame detection in SDK/GUI status.
 - [ ] **Harmless HID Injection Validation:** Validate keyboard, mouse, touch, touch-type, re-enumerate, and macro behavior against safe firmware screens or a sacrificial OS session. Prefer `sdk.run_macro()` for sequences.
 
 ## High-Risk / Low-Priority
