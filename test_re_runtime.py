@@ -888,54 +888,197 @@ def test_python_hash_lock_enforced():
     assert "angr==" in inp
 
 
-# --------------------------------------------------------------------------- hardening: Trivy triage
+# --------------------------------------------------------------------------- hardening: Trivy triage + explicit policy
 
 
-TRIVY_SAMPLE = {
-    "Results": [
-        {"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-            {"VulnerabilityID": "CVE-2023-1", "Severity": "CRITICAL", "PkgName": "zlib1g",
-             "InstalledVersion": "1.2.13-1", "FixedVersion": "", "Layer": {"DiffID": "sha256:layer1"}},
-            {"VulnerabilityID": "CVE-2023-2", "Severity": "HIGH", "PkgName": "openssl",
-             "InstalledVersion": "3.0", "FixedVersion": "3.0.1", "Layer": {"DiffID": "sha256:layer2"}},
-        ]},
-        {"Class": "lang-pkgs", "Type": "python", "Vulnerabilities": [
-            {"VulnerabilityID": "CVE-2024-1", "Severity": "CRITICAL", "PkgName": "angr",
-             "InstalledVersion": "9.3.1", "FixedVersion": "9.3.2", "Paths": ["/usr/local/lib/angr"]},
-        ]},
+def make_policy_entry(advisory_id, package, ecosystem="debian", installed_version="1.0", **overrides):
+    entry = {
+        "advisory_id": advisory_id,
+        "package": package,
+        "ecosystem": ecosystem,
+        "installed_version": installed_version,
+        "decision": "retain",
+        "rationale": "explicit test policy entry",
+        "package_necessity": "test necessity",
+        "functionality_exercised": "test exercised",
+        "mitigating_controls": "test controls",
+        "review_date": "2026-08-03",
+        "review_condition": "re-review when a vendor fix is published",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def critical_sample(*crits):
+    vulns = []
+    for cid, pkg, version in crits:
+        vulns.append({"VulnerabilityID": cid, "Severity": "CRITICAL", "PkgName": pkg,
+                      "InstalledVersion": version, "FixedVersion": ""})
+    return {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": vulns}]}
+
+
+def test_trivy_new_unfixed_critical_without_policy_fails():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-NEW", "zlib1g", "1.2.13"))
+    s = st.summarize(sample, policy=[])  # no policy entries
+    assert s["gate"]["all_unfixed_critical_policy_matched"] is False
+    assert s["gate"]["unfixed_critical_policy_failures"][0]["reason"] == "missing policy entry"
+    assert s["gate"]["ok"] is False
+    r = s["criticals"][0]
+    assert r["policy"]["match_kind"] == "missing"
+    assert r["policy"]["decision"] is None
+    # Generated recommendation is present but never counts as acceptance.
+    assert "recommendation" in r["policy"]
+
+
+def test_trivy_exact_policy_match_passes():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-1", "zlib1g", "1.2.13"))
+    policy = [make_policy_entry("CVE-1", "zlib1g", installed_version="1.2.13")]
+    s = st.summarize(sample, policy=policy)
+    assert s["gate"]["ok"] is True
+    assert s["gate"]["all_unfixed_critical_policy_matched"] is True
+    r = s["criticals"][0]
+    assert r["policy"]["match_kind"] == "exact"
+    assert r["policy"]["decision"]["decision"] == "retain"
+    assert r["policy"]["decision"]["review_condition"]
+
+
+def test_trivy_changed_installed_version_fails():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-1", "zlib1g", "1.2.13"))
+    policy = [make_policy_entry("CVE-1", "zlib1g", installed_version="9.9.9")]  # stale version
+    s = st.summarize(sample, policy=policy)
+    assert s["gate"]["ok"] is False
+    r = s["criticals"][0]
+    assert r["policy"]["match_kind"] == "mismatch"
+    assert "installed version" in r["policy"]["reason"]
+
+
+def test_trivy_changed_package_or_ecosystem_fails():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-1", "libsqlite3-0", "3.40.1"))
+    policy = [make_policy_entry("CVE-1", "zlib1g", installed_version="3.40.1")]  # wrong package
+    s = st.summarize(sample, policy=policy)
+    assert s["gate"]["ok"] is False
+    assert s["criticals"][0]["policy"]["match_kind"] == "mismatch"
+    # wrong ecosystem
+    policy2 = [make_policy_entry("CVE-1", "libsqlite3-0", ecosystem="alpine", installed_version="3.40.1")]
+    s2 = st.summarize(sample, policy=policy2)
+    assert s2["gate"]["ok"] is False
+    assert s2["criticals"][0]["policy"]["match_kind"] == "mismatch"
+    assert "ecosystem" in s2["criticals"][0]["policy"]["reason"]
+
+
+def test_trivy_incomplete_policy_fails():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-1", "zlib1g", "1.2.13"))
+    # Missing package_necessity -> incomplete.
+    policy = [make_policy_entry("CVE-1", "zlib1g", installed_version="1.2.13", package_necessity="")]
+    s = st.summarize(sample, policy=policy)
+    assert s["gate"]["ok"] is False
+    assert s["criticals"][0]["policy"]["match_kind"] == "incomplete"
+
+
+def test_trivy_stale_and_orphaned_entries_reported_and_fail():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-1", "zlib1g", "1.2.13"))
+    policy = [
+        make_policy_entry("CVE-1", "zlib1g", installed_version="1.2.13"),
+        make_policy_entry("CVE-ORPHAN", "tar", installed_version="1.34"),  # not in scan
     ]
-}
+    s = st.summarize(sample, policy=policy)
+    assert s["gate"]["ok"] is False
+    assert len(s["gate"]["stale_policy_entries"]) == 1
+    assert s["gate"]["stale_policy_entries"][0]["advisory_id"] == "CVE-ORPHAN"
 
 
-def test_trivy_summary_classifies_critical_and_high():
+def test_trivy_previously_accepted_now_fixable_fails():
     import tools.re.summarize_trivy as st
-    s = st.summarize(TRIVY_SAMPLE)
-    assert s["summary"]["criticals_total"] == 2
-    assert s["summary"]["highs_total"] == 1
-    assert s["summary"]["criticals_fixable"] == 1
-    assert s["summary"]["criticals_unfixed"] == 1
-    crits = {r["id"]: r for r in s["criticals"]}
-    assert crits["CVE-2023-1"]["fixed_status"] == "unfixed"
-    assert crits["CVE-2023-1"]["ecosystem"] == "debian"
-    assert crits["CVE-2023-1"]["source_layer"] == "sha256:layer1"
-    assert "decision" in crits["CVE-2023-1"]
-    assert crits["CVE-2023-1"]["decision"]["decision"] == "retain"
-    assert crits["CVE-2024-1"]["fixed_status"] == "fixed"
-    assert crits["CVE-2024-1"]["dependency_path"] == ["/usr/local/lib/angr"]
-    assert "angr" in crits["CVE-2024-1"]["purpose"].lower()
-    assert crits["CVE-2023-1"]["present_in_final_runtime_image"] is True
-
-
-def test_trivy_fixable_vs_unfixed_critical():
-    import tools.re.summarize_trivy as st
-    s = st.summarize(TRIVY_SAMPLE)
-    # angr has a fixed version -> fixable -> gate fails.
+    # A policy entry whose advisory now has a fixed version.
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-1", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.2.13", "FixedVersion": "1.2.14"}
+    ]}]}
+    policy = [make_policy_entry("CVE-1", "zlib1g", installed_version="1.2.13")]
+    s = st.summarize(sample, policy=policy)
     assert s["gate"]["zero_fixable_criticals"] is False
-    assert s["gate"]["fixable_critical_ids"] == ["CVE-2024-1"]
+    assert s["gate"]["newly_fixable_accepted"] == [{
+        "advisory_id": "CVE-1", "package": "zlib1g", "ecosystem": "debian",
+        "installed_version": "1.2.13",
+    }]
+    assert s["gate"]["ok"] is False
+
+
+def test_trivy_generated_suggestion_does_not_count_as_acceptance(tmp_path):
+    import tools.re.summarize_trivy as st
+    # Even a complete-looking generated recommendation must not satisfy the gate.
+    sample = critical_sample(("CVE-G", "libxml2", "2.9.14"))
+    s = st.summarize(sample, policy=[])
+    assert s["gate"]["all_unfixed_critical_policy_matched"] is False
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    empty_policy = tmp_path / "empty-policy.json"
+    empty_policy.write_text(json.dumps({"entries": []}))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate",
+                  "--policy", str(empty_policy)])
+    # empty policy -> no entries -> gate fails.
+    assert rc == 1
+
+
+def test_trivy_ambiguous_package_classification():
+    import tools.re.summarize_trivy as st
+    assert st.classify_package("libcapstone4")[2] == "capstone"
+    assert st.classify_package("libcapstone4")[1] is False
+    assert st.is_runtime_base("libcapstone4") is False
+    assert st.classify_package("libcap")[2] == "runtime-base"
+    assert st.is_runtime_base("libcap") is True
+    assert st.classify_package("libcap2")[1] is True
+    assert st.classify_package("libc6")[1] is True
+    assert st.classify_package("libc-bin")[1] is True
+    assert st.classify_package("tar")[1] is True
+    assert st.classify_package("dash")[1] is True
+    assert "libcap" not in st.classify_package("libcapstone4")[0].lower()
+
+
+def test_trivy_libcapstone4_reachability_describes_disassembly():
+    import tools.re.summarize_trivy as st
+    sample = critical_sample(("CVE-2025-68114", "libcapstone4", "4.0.2-5"))
+    s = st.summarize(sample, policy=[make_policy_entry("CVE-2025-68114", "libcapstone4", installed_version="4.0.2-5")])
+    r = s["criticals"][0]
+    assert r["family"] == "capstone"
+    assert "angr/radare2" in r["reachability"]
+    assert "runtime-base" not in r["reachability"]
+    assert "disassembly" in r["purpose"]
+
+
+def test_trivy_all_nine_current_critical_match_policy():
+    import tools.re.summarize_trivy as st
+    root = os.path.dirname(__file__)
+    policy_path = os.path.join(root, "containers", "re-runner", "vulnerability-acceptance.json")
+    entries = st.load_policy(policy_path)
+    assert len(entries) == 9
+    crits = [
+        ("CVE-2025-68114", "libcapstone4", "4.0.2-5"),
+        ("CVE-2026-58016", "libglib2.0-0", "2.74.6-2+deb12u9"),
+        ("CVE-2025-7458", "libsqlite3-0", "3.40.1-2+deb12u2"),
+        ("CVE-2026-6653", "libxml2", "2.9.14+dfsg-1.3~deb12u6"),
+        ("CVE-2026-13221", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-42496", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-57433", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-8376", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2023-45853", "zlib1g", "1:1.2.13.dfsg-1"),
+    ]
+    sample = critical_sample(*crits)
+    s = st.summarize(sample, policy=entries)
+    assert s["gate"]["ok"] is True
+    assert s["gate"]["all_unfixed_critical_policy_matched"] is True
+    assert len(s["gate"]["stale_policy_entries"]) == 0
+    assert all(c["policy"]["match_kind"] == "exact" for c in s["criticals"])
 
 
 def test_trivy_every_high_advisory_survives_sanitization():
-    # Individual HIGH records must not be dropped by package aggregation.
     import tools.re.summarize_trivy as st
     sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
         {"VulnerabilityID": "CVE-H-1", "Severity": "HIGH", "PkgName": "libcurl3-gnutls",
@@ -945,10 +1088,9 @@ def test_trivy_every_high_advisory_survives_sanitization():
         {"VulnerabilityID": "CVE-H-3", "Severity": "HIGH", "PkgName": "libexpat1",
          "InstalledVersion": "2.5", "FixedVersion": "", "Layer": {"DiffID": "sha256:l3"}},
     ]}]}
-    s = st.summarize(sample)
+    s = st.summarize(sample, policy=[])
     ids = {r["id"] for r in s["highs"]}
     assert ids == {"CVE-H-1", "CVE-H-2", "CVE-H-3"}
-    # Aggregation is an additional view, not a replacement.
     assert s["highs_by_package"][0]["findings"] == 2
 
 
@@ -960,91 +1102,13 @@ def test_trivy_high_per_finding_fixed_versions_and_paths_preserved():
         {"VulnerabilityID": "CVE-P-2", "Severity": "HIGH", "PkgName": "angr",
          "InstalledVersion": "9.3.1", "FixedVersion": "", "Paths": []},
     ]}]}
-    s = st.summarize(sample)
+    s = st.summarize(sample, policy=[])
     by_id = {r["id"]: r for r in s["highs"]}
     assert by_id["CVE-P-1"]["fixed_version"] == "9.3.2"
     assert by_id["CVE-P-1"]["fixed_status"] == "fixed"
     assert by_id["CVE-P-1"]["dependency_path"] == ["/usr/local/lib/angr"]
     assert by_id["CVE-P-2"]["fixed_version"] is None
     assert by_id["CVE-P-2"]["fixed_status"] == "unfixed"
-
-
-def test_trivy_generic_exposure_note_does_not_satisfy_decision_gate(tmp_path):
-    # A decision record that only carries a generic note must fail completeness.
-    import tools.re.summarize_trivy as st
-    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-        {"VulnerabilityID": "CVE-X", "Severity": "CRITICAL", "PkgName": "zlib1g",
-         "InstalledVersion": "1.0", "FixedVersion": ""}
-    ]}]}
-    s = st.summarize(sample, decisions={"CVE-X": {"decision": "retain", "rationale": "generic note"}})
-    assert s["gate"]["all_unfixed_critical_decisions_complete"] is False
-    assert s["gate"]["unfixed_critical_missing_decisions"] == ["CVE-X"]
-
-
-def test_trivy_missing_decisions_fail_gate(tmp_path):
-    import tools.re.summarize_trivy as st
-    # Override decisions to a missing/empty record for the unfixed critical.
-    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-        {"VulnerabilityID": "CVE-Y", "Severity": "CRITICAL", "PkgName": "zlib1g",
-         "InstalledVersion": "1.0", "FixedVersion": ""}
-    ]}]}
-    s = st.summarize(sample, decisions={"CVE-Y": {}})
-    assert s["gate"]["all_unfixed_critical_decisions_complete"] is False
-    assert s["gate"]["unfixed_critical_missing_decisions"] == ["CVE-Y"]
-    inp = tmp_path / "in.json"
-    inp.write_text(json.dumps(sample))
-    dec = tmp_path / "dec.json"
-    dec.write_text(json.dumps({"CVE-Y": {}}))
-    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
-                  "--markdown", str(tmp_path / "out.md"), "--gate",
-                  "--decisions", str(dec)])
-    assert rc == 1
-
-
-def test_trivy_complete_decisions_pass(tmp_path):
-    import tools.re.summarize_trivy as st
-    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-        {"VulnerabilityID": "CVE-Z", "Severity": "CRITICAL", "PkgName": "zlib1g",
-         "InstalledVersion": "1.0", "FixedVersion": ""}
-    ]}]}
-    s = st.summarize(sample)
-    assert s["gate"]["all_unfixed_critical_decisions_complete"] is True
-    inp = tmp_path / "in.json"
-    inp.write_text(json.dumps(sample))
-    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
-                  "--markdown", str(tmp_path / "out.md"), "--gate"])
-    assert rc == 0
-
-
-def test_trivy_incomplete_file_decision_fails_gate(tmp_path):
-    import tools.re.summarize_trivy as st
-    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-        {"VulnerabilityID": "CVE-Z", "Severity": "CRITICAL", "PkgName": "zlib1g",
-         "InstalledVersion": "1.0", "FixedVersion": ""}
-    ]}]}
-    decisions = {"CVE-Z": {"decision": "retain", "rationale": "only a note"}}
-    inp = tmp_path / "in.json"
-    inp.write_text(json.dumps(sample))
-    dec = tmp_path / "dec.json"
-    dec.write_text(json.dumps(decisions))
-    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
-                  "--markdown", str(tmp_path / "out.md"), "--gate", "--decisions", str(dec)])
-    assert rc == 1
-
-
-def test_trivy_zero_fixable_critical_gate(tmp_path):
-    import tools.re.summarize_trivy as st
-    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
-        {"VulnerabilityID": "CVE-1", "Severity": "CRITICAL", "PkgName": "zlib1g",
-         "InstalledVersion": "1.0", "FixedVersion": ""}
-    ]}]}
-    s = st.summarize(sample)
-    assert s["gate"]["zero_fixable_criticals"] is True
-    inp = tmp_path / "in.json"
-    inp.write_text(json.dumps(sample))
-    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
-                  "--markdown", str(tmp_path / "out.md"), "--gate"])
-    assert rc == 0
 
 
 def test_trivy_gate_fails_on_fixable_critical(tmp_path):
@@ -1055,11 +1119,43 @@ def test_trivy_gate_fails_on_fixable_critical(tmp_path):
     ]}]}
     inp = tmp_path / "in.json"
     inp.write_text(json.dumps(sample))
+    pol = tmp_path / "pol.json"
+    pol.write_text(json.dumps({"entries": []}))
     rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
-                  "--markdown", str(tmp_path / "out.md"), "--gate"])
+                  "--markdown", str(tmp_path / "out.md"), "--gate",
+                  "--policy", str(pol)])
+    # fixable critical -> gate fails regardless of policy.
     assert rc == 1
 
 
+def test_trivy_cli_gate_uses_default_tracked_policy(tmp_path):
+    # Without --policy, main() defaults to containers/re-runner/vulnerability-acceptance.json.
+    # Use all 9 tracked criticals so no policy entry is stale.
+    import tools.re.summarize_trivy as st
+    root = os.path.dirname(__file__)
+    crits = [
+        ("CVE-2025-68114", "libcapstone4", "4.0.2-5"),
+        ("CVE-2026-58016", "libglib2.0-0", "2.74.6-2+deb12u9"),
+        ("CVE-2025-7458", "libsqlite3-0", "3.40.1-2+deb12u2"),
+        ("CVE-2026-6653", "libxml2", "2.9.14+dfsg-1.3~deb12u6"),
+        ("CVE-2026-13221", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-42496", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-57433", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2026-8376", "perl-base", "5.36.0-7+deb12u3"),
+        ("CVE-2023-45853", "zlib1g", "1:1.2.13.dfsg-1"),
+    ]
+    sample = critical_sample(*crits)
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    # Run from the repo root so the default policy path resolves.
+    cwd = os.getcwd()
+    try:
+        os.chdir(root)
+        rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                      "--markdown", str(tmp_path / "out.md"), "--gate"])
+        assert rc == 0
+    finally:
+        os.chdir(cwd)
 # --------------------------------------------------------------------------- compose hardening
 
 

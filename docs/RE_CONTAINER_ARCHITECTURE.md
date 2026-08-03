@@ -123,14 +123,27 @@ assessment** — base/runtime libraries (zlib, glib, SQLite, Perl, libxml2, …)
 assessed as exercised at container startup or ordinary analysis, not only while
 processing mounted evidence.
 
-Every remaining unfixed CRITICAL carries an explicit decision record
-(`remove`, `isolate`, `split`, or `retain`) with rationale, package necessity,
-whether affected functionality is exercised, mitigating isolation controls, and
-a review/expiry condition (e.g. a vendor fix being published).
+Acceptance of every unfixed CRITICAL requires an **explicit, tracked policy
+entry** from `containers/re-runner/vulnerability-acceptance.json`, keyed by an
+exact match on advisory ID, package name, ecosystem, and installed version. Each
+policy entry carries a decision (`remove`, `isolate`, `split`, or `retain`),
+rationale, package necessity, whether affected functionality is exercised,
+mitigating isolation controls, a review date, and a review condition/expiry
+trigger (e.g. a vendor fix being published).
+
+Package purpose and runtime/base classification use **exact normalized names and
+boundary-safe family patterns** — never unrestricted substring matching — so
+`libcapstone4` is classified as the Capstone disassembly engine and is never
+matched by the base `libcap` token; `libc6`/`libc-bin`, `tar`, and `dash` are
+exact base/runtime names.
 
 The acceptance gate (`--gate`) fails when any CRITICAL finding has a
-vendor-provided fixed version, fails when any unfixed CRITICAL lacks a complete
-decision record, and reports fixable HIGH findings separately. It never claims
+vendor-provided fixed version, fails when any unfixed CRITICAL lacks an exact
+explicit policy match (missing, mismatched advisory/package/ecosystem/version, or
+incomplete), fails on stale or orphaned policy entries, fails when a previously
+accepted vulnerability now has a fixed version, and reports fixable HIGH findings
+separately. Generated default or suggested `retain` text is emitted only as a
+non-gating recommendation and never satisfies the gate. The gate never claims
 that runtime hardening eliminates an underlying vulnerability.
 
 ## Host boundary
