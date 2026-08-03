@@ -76,6 +76,129 @@ Use this sequence before BIOS exploration:
 6. Do not change BIOS values until a key press visibly moves between screens.
 ```
 
+## Beagle-12 HID Path Diagnostic
+
+The Beagle-12 should be controlled by the host PC and placed inline on the
+target side of the KVM2USB, between the Epiphan KVM cable USB-A lead and the
+Wyse USB port.
+
+```text
+Host PC control USB
+  -> Beagle-12 control port
+
+Captured USB bus:
+Host PC
+  -> USB 3.0 cable
+  -> KVM2USB 3.0
+  -> Epiphan KVM cable USB-A lead
+  -> Beagle-12
+  -> Wyse USB port
+```
+
+Do not put the Beagle between the host PC and the KVM2USB for this blocker. We
+already know the host PC can write valid reports to the KVM2USB; the unknown
+segment is the KVM2USB slave HID side presented to the Wyse.
+
+Prior DE2-115 evidence from `SemperSupra/DE2-115` is directly useful here:
+
+- The DE2 host-mode path with KVM2USB inline showed repeated
+  connect/disconnect/reset but no useful packets.
+- The same KVM2USB validated on the normal PC hub path as
+  `VID_2B77&PID_3661`.
+- The Beagle saw real `SETUP`, descriptor, `ACK`, and `IN/NAK` traffic on a
+  healthy PC-side path, so for the Wyse capture we should treat "resets only"
+  as materially different from "enumerates then ignores key reports".
+- The DE2 process also used correlated host actions plus analyzer evidence; the
+  matching AgentKVM2USB script is now `scripts/capture_hid_path_experiment.py`.
+
+Current host analyzer state:
+
+```text
+Device: Total Phase Beagle Protocol Analyzer
+Instance ID: USB\VID_1679&PID_2001\TP1112-141536
+Windows status: OK
+Driver service: WinUSB
+Problem: CM_PROB_NONE / Code 0
+Vendor API detect.py: port 0 available, serial 1112-141536
+Interpretation: Windows sees the analyzer control interface and the Total Phase
+API can open it.
+```
+
+Official Total Phase setup notes say the Beagle USB 12 is used with Data Center
+or the Beagle API for low/full-speed USB monitoring, and the Windows USB driver
+must be installed before the Beagle can be used by the host software. Data
+Center can then save captures as CSV, binary, or `.tdc`.
+
+Capture procedure:
+
+```text
+1. Start the Beagle capture before powering on or power-cycling the Wyse.
+2. Power-cycle the Wyse.
+3. Watch for USB reset, speed negotiation, device descriptor, configuration
+   descriptor, HID descriptor, report descriptor, Set Configuration, and Set Idle
+   or Set Protocol traffic.
+4. After the boot-failure screen appears, run the host-side HID experiment:
+
+   .venv\Scripts\python.exe scripts\capture_beagle_usb12.py `
+     --max-events 6000 `
+     --max-seconds 15 `
+     --output .work\beagle\wyse-hid-capslock-inline-decoded.jsonl
+
+   .venv\Scripts\python.exe scripts\capture_hid_path_experiment.py `
+     --experiment-id wyse-hid-capslock-inline-decoded `
+     --operator codex
+
+5. Stop the Beagle capture and store it in the private evidence vault with the
+   same experiment ID.
+```
+
+Latest inline Beagle result:
+
+```text
+Capture: .work\beagle\wyse-hid-capslock-inline-decoded.jsonl
+Experiment: .work\experiments\wyse-hid-capslock-inline-decoded
+Capture window: 2026-08-03T06:29:49Z through 2026-08-03T06:30:04Z
+Macro window: 2026-08-03T06:29:55Z through 2026-08-03T06:29:57Z
+Beagle records: 3736
+USB event records: 1 TARGET_CONNECT_UNRESET
+Token traffic: 1868 IN polls from Wyse to address 23 endpoint 2
+Handshake traffic: 1867 NAK
+HID data packets: 0
+Host macro result: two Caps Lock presses, each write returned 9-byte press and
+release reports
+KVM2USB status before/after: 1920x1080 active, firmware 4.0.0.39896, Caps Lock
+LED false before and after
+```
+
+Interpretation: the Wyse-facing USB leg is electrically present and the Wyse is
+polling the KVM2USB target-side interrupt endpoint, but the KVM2USB never returns
+keyboard data during host-side Caps Lock writes. This shifts the blocker away
+from a missing cable and toward the KVM2USB target-side HID forwarding state,
+target-side enumeration mode, or a missing vendor-app activation/re-enumeration
+step.
+
+Expected downstream evidence if the target-side path is healthy:
+
+| Event | Expected on Beagle |
+| --- | --- |
+| Wyse power-up | USB reset and enumeration on the Wyse-facing cable |
+| Device descriptor | A keyboard/mouse-class or composite HID device from the KVM2USB slave side |
+| HID setup | `Set Configuration`, HID report descriptor reads, and idle/protocol setup |
+| `PRESS capslock` | Interrupt IN keyboard report with usage `0x39`, then release report |
+| Wyse LED response | Output report or control transfer from Wyse changing Caps Lock LED state |
+| `PRESS f2` | Interrupt IN keyboard report with usage `0x3B`, then release report |
+
+Decision tree:
+
+| Beagle finding | Interpretation | Next action |
+| --- | --- | --- |
+| No bus activity at all | Cable, port, or KVM slave power/link problem | Try another Wyse USB port and confirm the KVM cable USB-A lead |
+| Reset but no descriptors | Electrical/link or device-side enumeration failure | Try USB 2.0-only path/hub and inspect KVM cable |
+| Descriptors but no HID interface | KVM2USB slave side not presenting keyboard/mouse | Compare with vendor app behavior and recovered re-enumeration report |
+| HID interface enumerates, but no key reports after host macro | KVM2USB firmware is not forwarding host writes to slave HID | Capture host-side USBPcap in parallel and compare timestamps |
+| Key reports appear, but Wyse does not respond | Wyse firmware input policy/port issue | Try another USB port and map BIOS USB settings with a physical keyboard |
+| Key and LED reports appear | HID path works | Continue BIOS setup mapping |
+
 Once the target reacts, use this setup-entry macro:
 
 ```text

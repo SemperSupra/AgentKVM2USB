@@ -25,6 +25,8 @@ from hardware_probe import effective_signal, frame_stats, parse_dshow_options
 from trace_replay import TraceReplay
 from agent_api import api_response
 from scripts.capture_mi00_experiment import default_experiment_id, write_metadata
+import scripts.capture_beagle_usb12 as beagle_usb12
+import scripts.capture_hid_path_experiment as hid_path_experiment
 
 class TestEpiphanKVM_Enhanced:
     """
@@ -210,6 +212,165 @@ class TestEpiphanKVM_Enhanced:
             "success": False,
             "executed": [],
             "errors": [{"line": 0, "text": "missing", "message": "Named macro not found"}],
+        }
+
+    def test_hid_path_experiment_default_id(self):
+        now = datetime.datetime(2026, 8, 3, 7, 0, 0, tzinfo=datetime.timezone.utc)
+
+        assert hid_path_experiment.default_experiment_id(now) == "hid-path-20260803T070000Z"
+
+    def test_hid_path_descriptor_normalizes_bytes_path(self, mocker):
+        mocker.patch(
+            "scripts.capture_hid_path_experiment.hid.enumerate",
+            return_value=[
+                {
+                    "path": b"abc",
+                    "interface_number": 3,
+                    "usage_page": 0xFF00,
+                    "usage": 0x101,
+                    "manufacturer_string": "Epiphan Systems Inc.",
+                    "product_string": "KVM2USB 3.0",
+                    "serial_number": None,
+                }
+            ],
+        )
+
+        assert hid_path_experiment.hid_descriptors() == [
+            {
+                "path": "616263",
+                "interface_number": 3,
+                "usage_page": 0xFF00,
+                "usage": 0x101,
+                "manufacturer_string": "Epiphan Systems Inc.",
+                "product_string": "KVM2USB 3.0",
+                "serial_number": None,
+            }
+        ]
+
+    def test_hid_path_beagle_status_parses_windows_pnp(self, mocker):
+        mocker.patch("scripts.capture_hid_path_experiment.platform.system", return_value="Windows")
+        mocker.patch(
+            "scripts.capture_hid_path_experiment.subprocess.run",
+            return_value=type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": json.dumps(
+                        {
+                            "Status": "Error",
+                            "FriendlyName": "Beagle USB 12 Protocol Analyzer",
+                            "InstanceId": "USB\\VID_1679&PID_2001\\TP1112-141536",
+                            "Problem": "CM_PROB_FAILED_INSTALL",
+                            "ConfigManagerErrorCode": 28,
+                        }
+                    ),
+                    "stderr": "",
+                },
+            )(),
+        )
+
+        assert hid_path_experiment.beagle_analyzer_status() == {
+            "checked": True,
+            "present": True,
+            "vid": "1679",
+            "pid": "2001",
+            "devices": [
+                {
+                    "Status": "Error",
+                    "FriendlyName": "Beagle USB 12 Protocol Analyzer",
+                    "InstanceId": "USB\\VID_1679&PID_2001\\TP1112-141536",
+                    "Problem": "CM_PROB_FAILED_INSTALL",
+                    "ConfigManagerErrorCode": 28,
+                }
+            ],
+        }
+
+    def test_beagle_detect_devices_marks_busy_ports(self):
+        class FakeBeagle:
+            BG_PORT_NOT_FREE = 0x8000
+
+            def bg_find_devices_ext(self, _port_count, _id_count):
+                return 2, [0, self.BG_PORT_NOT_FREE | 3], [1112141536, 42]
+
+        assert beagle_usb12.detect_devices(FakeBeagle()) == [
+            {"port": 0, "in_use": False, "unique_id": 1112141536, "serial": "1112-141536"},
+            {"port": 3, "in_use": True, "unique_id": 42, "serial": "0000-000042"},
+        ]
+
+    def test_beagle_packet_record_decodes_pid_status_and_events(self):
+        class FakeBeagle:
+            BG_READ_OK = 0
+            BG_READ_TIMEOUT = 1
+            BG_READ_ERR_MIDDLE_OF_PACKET = 2
+            BG_READ_ERR_SHORT_BUFFER = 4
+            BG_READ_USB_ERR_BAD_SIGNALS = 8
+            BG_READ_USB_ERR_BAD_SYNC = 16
+            BG_READ_USB_ERR_BIT_STUFF = 32
+            BG_READ_USB_ERR_FALSE_EOP = 64
+            BG_READ_USB_ERR_LONG_EOP = 128
+            BG_READ_USB_ERR_BAD_PID = 256
+            BG_READ_USB_ERR_BAD_CRC = 512
+            BG_EVENT_USB_HOST_DISCONNECT = 1
+            BG_EVENT_USB_TARGET_DISCONNECT = 2
+            BG_EVENT_USB_RESET = 4
+            BG_EVENT_USB_HOST_CONNECT = 8
+            BG_EVENT_USB_TARGET_CONNECT = 2048
+
+        record = beagle_usb12.packet_record(
+            FakeBeagle(),
+            index=7,
+            samplerate_khz=48000,
+            length=3,
+            status=512,
+            events=2048,
+            time_sop=48000,
+            packet=[0x69, 0x17, 0xA1, 0x00],
+        )
+
+        assert record["index"] == 7
+        assert record["time_sop_ns"] == 1000000
+        assert record["status_labels"] == ["BAD_CRC"]
+        assert record["event_labels"] == ["TARGET_CONNECT_UNRESET"]
+        assert record["pid_name"] == "IN"
+        assert record["token_address"] == 23
+        assert record["token_endpoint"] == 2
+        assert record["data_hex"] == "69 17 a1"
+
+    def test_beagle_summarize_capture_counts_pids_and_endpoints(self, tmp_path):
+        capture = tmp_path / "capture.jsonl"
+        capture.write_text(
+            "\n".join(
+                [
+                    json.dumps({"event": "capture_start"}),
+                    json.dumps(
+                        {
+                            "pid_name": None,
+                            "event_labels": ["TARGET_CONNECT_UNRESET"],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "pid_name": "IN",
+                            "event_labels": [],
+                            "token_address": 23,
+                            "token_endpoint": 2,
+                        }
+                    ),
+                    json.dumps({"pid_name": "NAK", "event_labels": []}),
+                    json.dumps({"pid_name": "DATA1", "event_labels": []}),
+                    json.dumps({"event": "capture_stop"}),
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        assert beagle_usb12.summarize_capture(capture) == {
+            "records": 4,
+            "pid_counts": {"DATA1": 1, "EVENT_ONLY": 1, "IN": 1, "NAK": 1},
+            "event_counts": {"TARGET_CONNECT_UNRESET": 1},
+            "endpoint_counts": {"23:2": 1},
+            "data_packets": 1,
         }
 
     def test_headless_api_exposes_status_health_and_macros(self):

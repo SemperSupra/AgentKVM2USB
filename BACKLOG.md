@@ -21,7 +21,7 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [x] **FX3 Firmware Container Parser:** Add offline Cypress FX3 `.img` parsing, checksum validation, entry address recovery, and request `0xA0` chunk planning. See `FIRMWARE_UPDATE_RECOVERY.md`.
 - [ ] **FPGA Bitstream Packet Decoder:** First-pass decoder now normalizes the bit-reversed FPGA payload to canonical Xilinx sync `aa 99 55 66` and emits packet-like records, opcode counts, and truncation flags. Continue with UG380/TORC cross-checking before treating register names, CRC behavior, or frame boundaries as authoritative.
 - [x] **Signal Health Model:** Distinguish HID-reported signal, UVC stream-open state, latest-frame presence, blank-frame detection, and stale-frame detection in SDK/GUI status.
-- [ ] **Wyse BIOS Automation Map:** Current video capture is healthy and the Wyse boot-failure screen is visible, but target-side HID is not reacting to valid 9-byte KVM2USB keyboard writes. Verify the Epiphan KVM cable USB-A leg is connected/enumerated by the Wyse, then map setup pages in `WYSE_BIOS_AUTOMATION.md`.
+- [ ] **Wyse BIOS Automation Map:** Current video capture is healthy and the Wyse boot-failure screen is visible. The Beagle-12 now proves the Wyse-facing USB leg is present and polling KVM2USB address `23` endpoint `2`, but synchronized Caps Lock macro captures produced only `IN/NAK` traffic and zero HID data packets. Next priority is identifying the missing KVM2USB target-side HID forwarding or activation step, then mapping setup pages.
 - [ ] **Harmless HID Injection Validation:** Validate keyboard, mouse, touch, touch-type, re-enumerate, and macro behavior against safe firmware screens or a sacrificial OS session. Prefer `sdk.run_macro()` for sequences.
 
 ## High-Risk / Low-Priority
@@ -44,6 +44,8 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 ## Testability and Repository Hygiene
 - [ ] **Structured Hardware Probe:** Keep expanding the script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, frame statistics, and sample capture path.
 - [x] **Structured Macro Results:** Return parse/runtime errors and HID write results from `run_macro()` instead of only printing them.
+- [x] **HID Path Experiment Capture:** Add `scripts/capture_hid_path_experiment.py` so host macro timestamps, HID descriptors, status, macro write results, and screen snapshots can be correlated with Beagle-12 target-side captures.
+- [x] **Beagle USB12 Capture Automation:** Add `scripts/capture_beagle_usb12.py` for Total Phase Beagle API captures, USB PID/token decoding, endpoint summaries, and JSONL evidence files outside Git.
 - [x] **Configurable Session Output Root:** Lab automation can override the default `runtime_sessions/` root with `EpiphanKVM_SDK(runtime_root=...)`, `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
 - [ ] **Persistent Profile Store:** Decide whether non-secret user presets should remain per-run or be promoted to a user profile directory outside the repository.
 - [ ] **Clean Windows Smoke Test:** Validate the portable ZIP on a clean Windows 11 machine with no repository checkout.
