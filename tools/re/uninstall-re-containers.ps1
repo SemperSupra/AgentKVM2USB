@@ -1,6 +1,10 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
+    [ValidateSet('Auto', 'DockerDesktop', 'WslEngine')]
+    [string]$ContainerRuntime = 'Auto',
     [string]$WslDistribution = 'Ubuntu',
+    [switch]$NoStartDockerDesktop,
+    [int]$StartTimeoutSeconds = 120,
     [switch]$RemoveWorkData,
     [switch]$RemoveUsbipd,
     [switch]$RemoveWindowsCapture
@@ -8,19 +12,27 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$wslRepo = (& wsl.exe -d $WslDistribution -- wslpath -a $repoRoot).Trim()
+Import-Module (Join-Path $PSScriptRoot 'runtime.psm1') -Force
 
-function Quote-Bash([string]$Value) {
-    $singleQuoteEscape = "'" + [char]34 + "'" + [char]34 + "'"
-    return "'" + $Value.Replace("'", $singleQuoteEscape) + "'"
-}
+$repoRoot = Get-ReRepoRoot
+$selection = Select-ReRuntime `
+    -ContainerRuntime $ContainerRuntime `
+    -WslDistribution $WslDistribution `
+    -NoStartDockerDesktop:$NoStartDockerDesktop `
+    -StartTimeoutSeconds $StartTimeoutSeconds
+$runtime = $selection.selected_runtime
+Write-Host "Uninstalling with runtime: $runtime"
 
-if ($wslRepo) {
-    $command = "cd $(Quote-Bash $wslRepo) && docker compose --env-file .work/re/.env.re -f compose.re.yml down --remove-orphans --volumes || true; docker image rm agentkvm2usb/re-runner:1 agentkvm2usb/ghidra:12.1.2-upstream agentkvm2usb/binwalk:3.1.0-upstream 2>/dev/null || true"
-    if ($PSCmdlet.ShouldProcess('Project Docker resources', 'Remove')) {
-        & wsl.exe -d $WslDistribution -- bash -lc $command
-    }
+# Best-effort teardown of project containers, networks, volumes, and images
+# through the same adapter used by bootstrap/verify/run.
+$projectImages = @(
+    'agentkvm2usb/re-runner:1',
+    'agentkvm2usb/ghidra:12.1.2-upstream',
+    'agentkvm2usb/binwalk:3.1.0-upstream'
+)
+if ($PSCmdlet.ShouldProcess('Project Docker resources', 'Remove')) {
+    Invoke-ReCompose -- --env-file .work/re/.env.re -f compose.re.yml down --remove-orphans --volumes
+    Invoke-ReDocker -- image rm $projectImages
 }
 
 if ($RemoveWorkData -and $PSCmdlet.ShouldProcess((Join-Path $repoRoot '.work\re'), 'Delete')) {
