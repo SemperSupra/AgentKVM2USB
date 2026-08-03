@@ -154,6 +154,15 @@ static-confirmed vendor IN requests `0xB2`, `0xB3`, and `0xE2`, requires
 `--execute-read-only` before issuing a transfer, and has no implementation path
 for vendor OUT, firmware update, EDID write, or FPGA write requests.
 
+The read-only path is now integrated for application use:
+
+| Surface | Behavior |
+| --- | --- |
+| `EpiphanKVM_SDK.get_config_status()` | One-shot MI_00 read-only status with failure-as-data output |
+| `EpiphanKVM_SDK.get_device_health(include_mi00=True)` | Adds MI_00 details to the structured health model only when explicitly requested |
+| `hardware_probe.py --include-mi00` | Includes MI_00 source, mode, refresh, flags, and user-mode data in the diagnostic JSON |
+| GUI Tools -> Read Config Status | Performs one on-demand read-only query and displays the parsed result |
+
 First live read-only MI_00 probe after official WinUSB INF binding:
 
 | Request | Payload | Parsed result |

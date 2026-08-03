@@ -327,6 +327,42 @@ class TestEpiphanKVM_Enhanced:
             "reason": "hid_and_frame",
         }
 
+    def test_get_device_health_can_include_mi00_status(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.latest_frame = None
+        sdk.latest_frame_seq = 0
+        sdk.latest_frame_at = None
+        sdk.current_camera_name = None
+        sdk.cap = None
+        sdk.get_status = lambda: {
+            "resolution": "0x0",
+            "is_signal_active": False,
+            "leds": {"caps": False, "num": False, "scroll": False},
+            "signal_source": "none",
+            "firmware_version": None,
+        }
+        sdk.get_config_status = lambda libusb_dll=None: {
+            "available": True,
+            "error": None,
+            "requests": {"input_status": {"parsed": {"width": 1920, "height": 1080}}},
+        }
+
+        health = sdk.get_device_health(include_mi00=True, libusb_dll="libusb-1.0.dll")
+
+        assert health["mi00"]["available"] is True
+        assert health["mi00"]["requests"]["input_status"]["parsed"]["width"] == 1920
+
+    def test_get_config_status_reports_probe_errors_as_data(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        mocker.patch("mi00_probe.find_device", side_effect=Mi00ProbeError("driver missing"))
+
+        assert sdk.get_config_status() == {
+            "available": False,
+            "error": "driver missing",
+            "requests": {},
+        }
+
     def test_parse_config_input_status_payload(self):
         """Documents the recovered MI_00 request 0xB2 InputStatusInfo layout."""
         payload = bytearray(29)
@@ -678,6 +714,23 @@ class TestKvmAppGUI:
             def get_processed_frame(self):
                 return None
 
+            def get_config_status(self):
+                return {
+                    "available": True,
+                    "error": None,
+                    "requests": {
+                        "input_status": {
+                            "parsed": {
+                                "label": "RGB 1920x1080p@60.318, HDMI",
+                                "source": "RGB",
+                                "mode_name": "HDMI",
+                            }
+                        },
+                        "device_flags": {"parsed": {"raw": 0xFE}},
+                        "user_mode": {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                    },
+                }
+
             def reenumerate_target(self):
                 pass
 
@@ -731,6 +784,14 @@ class TestKvmAppGUI:
         assert window.show_host_cursor is False
         window.toggle_cursor_vis(True)
         assert window.show_host_cursor is True
+
+    def test_read_config_status_shows_mi00_summary(self, window, mocker):
+        import kvmapp_gui
+
+        info = mocker.patch.object(kvmapp_gui.QMessageBox, "information")
+        window.read_config_status()
+
+        assert "RGB 1920x1080p@60.318, HDMI" in info.call_args[0][2]
 
 
 class TestHardwareProbeHelpers:

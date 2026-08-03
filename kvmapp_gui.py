@@ -122,6 +122,8 @@ class KvmAppGUI(QMainWindow):
         tools_m.addAction("Send Alt+Space", lambda: self.sdk.hotkey("alt", "space"))
         tools_m.addAction("Send GUI/Windows Key", lambda: self.sdk.hotkey("gui"))
         tools_m.addSeparator()
+        tools_m.addAction("Read Config Status", self.read_config_status)
+        tools_m.addSeparator()
         self.rec_act = tools_m.addAction("Start &Recording session", self.toggle_recording)
         
         # Options
@@ -383,6 +385,28 @@ class KvmAppGUI(QMainWindow):
         painter.drawImage((viewport.width() - scaled.width()) // 2, (viewport.height() - scaled.height()) // 2, scaled)
         painter.end()
         self.status.showMessage("Frame sent to printer", 3000)
+
+    def read_config_status(self):
+        config = self.sdk.get_config_status()
+        if not config.get("available"):
+            message = config.get("error") or "MI_00 config status is unavailable."
+            QMessageBox.warning(self, "Config Status", message)
+            return
+
+        requests = config.get("requests", {})
+        input_status = (requests.get("input_status") or {}).get("parsed") or {}
+        flags = (requests.get("device_flags") or {}).get("parsed") or {}
+        user_mode = (requests.get("user_mode") or {}).get("parsed") or {}
+        lines = [
+            f"Input: {input_status.get('label', 'unknown')}",
+            f"Source: {input_status.get('source', 'unknown')}",
+            f"Mode: {input_status.get('mode_name', 'unknown')}",
+            f"Flags: 0x{int(flags.get('raw', 0)):02x}",
+            f"User mode: {user_mode.get('width', 'unknown')}x{user_mode.get('height', 'unknown')}, "
+            f"{'enabled' if user_mode.get('enabled') else 'disabled'}",
+        ]
+        QMessageBox.information(self, "Config Status", "\n".join(lines))
+        self.status.showMessage("Read MI_00 config status", 3000)
 
     def save_screenshot(self):
         path = self.sdk.get_screen(prefix=self.user_prefix)

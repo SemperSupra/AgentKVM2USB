@@ -52,6 +52,15 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Seconds to measure frame cadence after the first frame is available.",
     )
+    parser.add_argument(
+        "--include-mi00",
+        action="store_true",
+        help="Include guarded read-only MI_00 WinUSB/libusb config-interface status.",
+    )
+    parser.add_argument(
+        "--libusb-dll",
+        help="Optional explicit libusb-1.0.dll path for --include-mi00.",
+    )
     return parser.parse_args()
 
 
@@ -248,6 +257,8 @@ def probe(
     prefix: str,
     include_dshow_options: bool,
     measure_sec: float,
+    include_mi00: bool,
+    libusb_dll: str | None,
 ) -> dict:
     sdk = EpiphanKVM_SDK()
     try:
@@ -264,6 +275,7 @@ def probe(
         stats = frame_stats(frame)
         cadence = measure_frame_cadence(sdk, measure_sec)
         dshow = dshow_options(sdk.current_camera_name) if include_dshow_options else None
+        mi00 = sdk.get_config_status(libusb_dll=libusb_dll) if include_mi00 else None
         return {
             "hid": {
                 "keyboard": sdk.kb_dev is not None,
@@ -283,6 +295,7 @@ def probe(
             "frameStats": stats,
             "frameCadence": cadence,
             "status": status,
+            "mi00": mi00,
             "effectiveSignal": effective_signal(status, stats),
             "snapshot": str(Path(snapshot).resolve()) if snapshot else None,
         }
@@ -300,6 +313,8 @@ def main() -> int:
                 args.prefix,
                 args.include_dshow_options,
                 args.measure_sec,
+                args.include_mi00,
+                args.libusb_dll,
             ),
             indent=2,
         )

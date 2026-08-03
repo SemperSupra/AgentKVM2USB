@@ -47,12 +47,12 @@ Observed:
 - With the revised adapter chain, captured frame showed the Wyse firmware screen: `No bootable devices found`.
 - HID usage `0x103`, feature report `3`, returned bytes `80 07 38 04 01`, decoded as `1920x1080 active`.
 - `get_status()` now reports `resolution: 1920x1080`, `is_signal_active: true`, and `signal_source: touch_feature_3`.
-- `hardware_probe.py` now emits HID collection metadata, camera open state, frame statistics when available, and an `effectiveSignal` block that combines HID signal and visible frame evidence.
+- `hardware_probe.py` now emits HID collection metadata, camera open state, frame statistics when available, and an `effectiveSignal` block that combines HID signal and visible frame evidence. With `--include-mi00`, it also performs guarded read-only MI_00 config-interface reads for source, mode, refresh, flags, and user-mode sentinel state.
 - When the GUI owns the DirectShow capture device, a separate probe may report `cameraState.opened: false`, `frameStats: null`, and `effectiveSignal.reason: hid_report`; this is expected camera ownership behavior rather than a signal failure.
 - DirectShow advertises YUY2-only capture modes from `640x360` through `1920x1200`, with each mode allowing approximately `15` to `60.0002` fps. OpenCV currently opens the KVM2USB through `DSHOW` at `1920x1080`, FOURCC `YUY2`.
 - The enhanced probe observed `180` unique captured frames over `3` seconds, measured `60.0 fps`, while the Wyse firmware screen was static.
 - A Wyse reboot monitor captured Dell logo, PXE/media check, and `No bootable devices found` states with no HID live-mode resolution change or signal drop; all reported `1920x1080 active`.
-- No current read-only SDK path exposes the Wyse-facing EDID. Host WMI EDID queries only show the host displays, UVC exposes capture modes, HID usage `0x103` exposes live mode, and USB MI_00 `KVM2USB 3.0 Config` is present but has Windows problem code `28` without a vendor driver.
+- No current read-only SDK path exposes the Wyse-facing EDID. Host WMI EDID queries only show the host displays, UVC exposes capture modes, HID usage `0x103` exposes live mode, and guarded MI_00 reads expose source/mode/refresh/flags but not raw EDID.
 - Detailed current pipeline notes are tracked in `VIDEO_PIPELINE.md`.
 - Recovered official app, driver, firmware, HID, and config-interface capability
   inventory is tracked in `RECOVERED_CAPABILITIES.md`.
@@ -67,6 +67,7 @@ Observed:
 - `epiphan_firmware.py` now parses Cypress FX3 `.img` firmware containers offline, validates the 32-bit data-word checksum, and produces the same `0x1000`-bounded address chunks used by the vendor updater's request `0xA0` write/read-verify path.
 - `scripts/inspect_epiphan_firmware.py` now emits offline JSON summaries for Epiphan `.fw` packages, including FX3 records/checksums, FPGA sync offset, package metadata, and firmware-packaged EDID summary/checksum state.
 - `epiphan_config.py` and `scripts/inspect_epiphan_config.py` expose the recovered MI_00 request map and read-only payload parsers as machine-consumable JSON, while keeping write/update requests metadata-only.
+- `EpiphanKVM_SDK.get_config_status()` exposes the approved live read-only MI_00 requests as failure-as-data JSON, and `get_device_health(include_mi00=True)` can include those results for automation. The GUI exposes this through Tools -> Read Config Status as a single on-demand query.
 - `trace_replay.py` and `scripts/summarize_trace.py` provide a deterministic no-hardware replay foundation for descriptor/status/host-log experiment directories.
 - The official `kvm2usb3.img` has 6 valid FX3 records, 61 transfer chunks, entry `0x4002a114`, checksum `0x19fc6591`, and SHA256 `97c1e45f1af12ff7187275547e690b3105abe21c0f6187b9e99e5cd674fb3f3a`.
 - The official `kvm2usb3-sandbox.img` has 5 valid FX3 records, 51 transfer chunks, entry `0x400207a4`, checksum `0x2f1dea7f`, and SHA256 `f744a812c62208812392d9f085bbfe6f3184a3871c339e21487d6ab2e246e07d`.
@@ -120,8 +121,8 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Feature writes for touch type and slave re-enumeration are recovered and unit-tested offline, but still require a safe target session before live validation.
 - Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
-- `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar.
-- SDK configuration helpers are offline-only. They parse/build recovered MI_00 payloads but do not bind WinUSB or send raw USB control requests.
+- `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar. It can include MI_00 results only when explicitly called with `include_mi00=True`.
+- SDK configuration helpers parse/build recovered MI_00 payloads, and the opt-in live config path sends only the approved vendor IN read requests.
 - The live MI_00 probe is read-only by construction. It requires `--execute-read-only`, exposes only static-confirmed vendor IN requests, and has no code path for write/update requests.
 - User approval on 2026-08-03: start blocker 1, the read-only MI_00 config-interface probe. Guardrails: only vendor IN requests `0xB2`, `0xB3`, and `0xE2`; no OUT requests; no firmware/update/EDID writes; driver binding is a host-state change and must use the official INF only if needed.
 - User plan on 2026-08-03: another machine will be prepared for blocker 2, harmless HID injection validation.
@@ -142,12 +143,13 @@ Validated locally:
 
 - `python -m compileall -q .`
 - `.venv\Scripts\python.exe -m pytest -v`
-- `.venv\Scripts\python.exe -m pytest -q` (`38 passed`)
+- `.venv\Scripts\python.exe -m pytest -q` (`45 passed`)
 - `python -m json.tool .package-foundry\package.json`
 - `python scripts\build_portable.py`
 - `python hardware_probe.py --capture`
 - `.venv\Scripts\python.exe hardware_probe.py`
 - `.venv\Scripts\python.exe hardware_probe.py --include-dshow-options --measure-sec 3`
+- `.venv\Scripts\python.exe hardware_probe.py --wait-sec 1 --include-mi00 --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
 - `.venv\Scripts\python.exe -c "from epiphan_sdk import EpiphanKVM_SDK; ..."` read-only live status check, including firmware version `4.0.0.39896`
 - release script dry-run and release upload path
 - portable dependency installer in an extracted path containing spaces

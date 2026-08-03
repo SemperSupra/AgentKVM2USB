@@ -587,7 +587,44 @@ class EpiphanKVM_SDK:
             "firmware_version": self.get_firmware_version(),
         }
 
-    def get_device_health(self, stale_after_sec=2.0):
+    def get_config_status(self, libusb_dll=None, timeout_ms=1000):
+        """Reads static-confirmed MI_00 config status through vendor IN requests only."""
+        from mi00_probe import Mi00ProbeError, find_device, read_config_request
+
+        try:
+            dev = find_device(libusb_dll=libusb_dll)
+            if dev is None:
+                return {
+                    "available": False,
+                    "error": "KVM2USB 3.0 USB device not found",
+                    "requests": {},
+                }
+            requests = {}
+            for name in ("input_status", "device_flags", "user_mode"):
+                requests[name] = read_config_request(
+                    dev,
+                    name,
+                    timeout_ms=timeout_ms,
+                ).as_dict()
+            return {
+                "available": True,
+                "error": None,
+                "requests": requests,
+            }
+        except Mi00ProbeError as exc:
+            return {
+                "available": False,
+                "error": str(exc),
+                "requests": {},
+            }
+        except Exception as exc:
+            return {
+                "available": False,
+                "error": f"unexpected MI_00 probe failure: {exc}",
+                "requests": {},
+            }
+
+    def get_device_health(self, stale_after_sec=2.0, include_mi00=False, libusb_dll=None):
         """Returns a structured HID/UVC/frame health model for agents and GUI."""
         status = self.get_status()
         with self._lock:
@@ -607,7 +644,7 @@ class EpiphanKVM_SDK:
         hid_active = bool(status.get("is_signal_active"))
         cap_opened = bool(self.cap and self.cap.isOpened())
 
-        return {
+        health = {
             "status": status,
             "camera": {
                 "name": self.current_camera_name,
@@ -629,6 +666,9 @@ class EpiphanKVM_SDK:
                 "reason": self._effective_signal_reason(hid_active, frame_present, frame_nonblank, frame_stale),
             },
         }
+        if include_mi00:
+            health["mi00"] = self.get_config_status(libusb_dll=libusb_dll)
+        return health
 
     @staticmethod
     def _frame_health_stats(frame):

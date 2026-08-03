@@ -122,6 +122,13 @@ To emit machine-consumable hardware diagnostics:
 python hardware_probe.py --capture
 ```
 
+To include guarded read-only MI_00 config-interface diagnostics after the
+official WinUSB INF is bound:
+
+```bash
+python hardware_probe.py --include-mi00 --libusb-dll path\to\libusb-1.0.dll
+```
+
 ## Contributing
 Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.
 
