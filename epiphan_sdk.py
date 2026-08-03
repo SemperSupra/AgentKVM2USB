@@ -598,30 +598,44 @@ class EpiphanKVM_SDK:
                     "available": False,
                     "error": "KVM2USB 3.0 USB device not found",
                     "requests": {},
+                    "user_modes": [],
                 }
             requests = {}
-            for name in ("input_status", "device_flags", "user_mode"):
+            for name in ("input_status", "device_flags"):
                 requests[name] = read_config_request(
                     dev,
                     name,
                     timeout_ms=timeout_ms,
                 ).as_dict()
+            user_modes = [
+                read_config_request(
+                    dev,
+                    "user_mode",
+                    w_value=index,
+                    timeout_ms=timeout_ms,
+                ).as_dict()
+                for index in range(3)
+            ]
+            requests["user_mode"] = user_modes[0]
             return {
                 "available": True,
                 "error": None,
                 "requests": requests,
+                "user_modes": user_modes,
             }
         except Mi00ProbeError as exc:
             return {
                 "available": False,
                 "error": str(exc),
                 "requests": {},
+                "user_modes": [],
             }
         except Exception as exc:
             return {
                 "available": False,
                 "error": f"unexpected MI_00 probe failure: {exc}",
                 "requests": {},
+                "user_modes": [],
             }
 
     def get_device_health(self, stale_after_sec=2.0, include_mi00=False, libusb_dll=None):

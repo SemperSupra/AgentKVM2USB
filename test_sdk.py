@@ -351,6 +351,7 @@ class TestEpiphanKVM_Enhanced:
                     "parsed": {"width": 1920, "height": 1080, "is_signal_active": True}
                 }
             },
+            "user_modes": [],
         }
 
         health = sdk.get_device_health(include_mi00=True, libusb_dll="libusb-1.0.dll")
@@ -368,7 +369,40 @@ class TestEpiphanKVM_Enhanced:
             "available": False,
             "error": "driver missing",
             "requests": {},
+            "user_modes": [],
         }
+
+    def test_get_config_status_reads_three_user_mode_slots(self, mocker):
+        class FakeDevice:
+            def __init__(self):
+                self.calls = []
+
+        def fake_read(dev, name, w_value=0, timeout_ms=1000):
+            dev.calls.append((name, w_value, timeout_ms))
+            parsed = {"is_signal_active": True} if name == "input_status" else {}
+            return type(
+                "FakeRead",
+                (),
+                {"as_dict": lambda self: {"name": name, "wValue": w_value, "parsed": parsed}},
+            )()
+
+        dev = FakeDevice()
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        mocker.patch("mi00_probe.find_device", return_value=dev)
+        mocker.patch("mi00_probe.read_config_request", side_effect=fake_read)
+
+        status = sdk.get_config_status(timeout_ms=250)
+
+        assert status["available"] is True
+        assert [mode["wValue"] for mode in status["user_modes"]] == [0, 1, 2]
+        assert status["requests"]["user_mode"]["wValue"] == 0
+        assert dev.calls == [
+            ("input_status", 0, 250),
+            ("device_flags", 0, 250),
+            ("user_mode", 0, 250),
+            ("user_mode", 1, 250),
+            ("user_mode", 2, 250),
+        ]
 
     def test_parse_config_input_status_payload(self):
         """Documents the recovered MI_00 request 0xB2 InputStatusInfo layout."""
@@ -736,6 +770,11 @@ class TestKvmAppGUI:
                         "device_flags": {"parsed": {"raw": 0xFE}},
                         "user_mode": {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
                     },
+                    "user_modes": [
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                        {"parsed": {"width": 65535, "height": 65535, "enabled": False}},
+                    ],
                 }
 
             def reenumerate_target(self):
@@ -799,6 +838,7 @@ class TestKvmAppGUI:
         window.read_config_status()
 
         assert "RGB 1920x1080p@60.318, HDMI" in info.call_args[0][2]
+        assert "User mode 3: 65535x65535, disabled" in info.call_args[0][2]
 
 
 class TestHardwareProbeHelpers:

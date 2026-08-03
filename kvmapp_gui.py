@@ -396,14 +396,21 @@ class KvmAppGUI(QMainWindow):
         requests = config.get("requests", {})
         input_status = (requests.get("input_status") or {}).get("parsed") or {}
         flags = (requests.get("device_flags") or {}).get("parsed") or {}
-        user_mode = (requests.get("user_mode") or {}).get("parsed") or {}
+        user_modes = config.get("user_modes") or [requests.get("user_mode")]
+        user_mode_lines = []
+        for index, mode_entry in enumerate(user_modes):
+            user_mode = (mode_entry or {}).get("parsed") or {}
+            user_mode_lines.append(
+                f"User mode {index + 1}: {user_mode.get('width', 'unknown')}x"
+                f"{user_mode.get('height', 'unknown')}, "
+                f"{'enabled' if user_mode.get('enabled') else 'disabled'}"
+            )
         lines = [
             f"Input: {input_status.get('label', 'unknown')}",
             f"Source: {input_status.get('source', 'unknown')}",
             f"Mode: {input_status.get('mode_name', 'unknown')}",
             f"Flags: 0x{int(flags.get('raw', 0)):02x}",
-            f"User mode: {user_mode.get('width', 'unknown')}x{user_mode.get('height', 'unknown')}, "
-            f"{'enabled' if user_mode.get('enabled') else 'disabled'}",
+            *user_mode_lines,
         ]
         QMessageBox.information(self, "Config Status", "\n".join(lines))
         self.status.showMessage("Read MI_00 config status", 3000)

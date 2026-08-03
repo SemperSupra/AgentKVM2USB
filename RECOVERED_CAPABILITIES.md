@@ -160,8 +160,8 @@ The read-only path is now integrated for application use:
 | --- | --- |
 | `EpiphanKVM_SDK.get_config_status()` | One-shot MI_00 read-only status with failure-as-data output |
 | `EpiphanKVM_SDK.get_device_health(include_mi00=True)` | Adds MI_00 details to the structured health model only when explicitly requested |
-| `hardware_probe.py --include-mi00` | Includes MI_00 source, mode, refresh, flags, and user-mode data in the diagnostic JSON |
-| GUI Tools -> Read Config Status | Performs one on-demand read-only query and displays the parsed result |
+| `hardware_probe.py --include-mi00` | Includes MI_00 source, mode, refresh, flags, and all three user-mode slots in the diagnostic JSON |
+| GUI Tools -> Read Config Status | Performs one on-demand read-only query and displays the parsed result, including all three user-mode slots |
 
 When MI_00 diagnostics are explicitly included, the SDK and hardware probe use
 MI_00 input-status activity as a third effective-signal evidence source beside
@@ -174,7 +174,7 @@ First live read-only MI_00 probe after official WinUSB INF binding:
 | --- | --- | --- |
 | `0xB2` input status | `52 47 42 00 00 00 00 00 00 00 00 00 48 44 4d 49 00 00 00 00 a4 ea 00 00 80 07 38 04 00` | `RGB`, mode `HDMI`, `1920x1080`, active, refresh approximately `60.068 Hz` |
 | `0xE2` device flags | `fe` | preserve aspect ratio, performance mode, and multichannel audio bits set; high bits still unmapped |
-| `0xB3` user mode | `ff ff ff ff ff` | disabled sentinel for tested `wValue`/`wIndex` values `0..2` |
+| `0xB3` user mode slots 0-2 | `ff ff ff ff ff` | disabled sentinel for `wValue` values `0`, `1`, and `2` |
 
 Recovered update transfer behavior:
 

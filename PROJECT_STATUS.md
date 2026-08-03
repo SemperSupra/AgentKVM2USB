@@ -62,12 +62,12 @@ Observed:
 - `scripts/probe_mi00_config.py` successfully performed read-only live MI_00 requests after WinUSB binding:
   - `0xB2` input status: source `RGB`, mode `HDMI`, `1920x1080`, active, refresh around `60 Hz`, `scan_flag_raw=0`.
   - `0xE2` device flags: raw `0xfe`; recovered aspect-ratio, performance, and multichannel-audio bits are set; high bits remain unmapped.
-  - `0xB3` user mode: `ff ff ff ff ff` disabled sentinel for tested `wValue`/`wIndex` values `0..2`.
+  - `0xB3` user modes: `ff ff ff ff ff` disabled sentinel for `wValue` slots `0`, `1`, and `2`.
 - The firmware `.fw` package contains a validated KVM2USB 3.0 EDID hex dump with manufacturer `EPH`, two valid EDID blocks, and base detailed timings for `1920x1080`, `1280x720`, and `1920x1200` near 60 Hz.
 - `epiphan_firmware.py` now parses Cypress FX3 `.img` firmware containers offline, validates the 32-bit data-word checksum, and produces the same `0x1000`-bounded address chunks used by the vendor updater's request `0xA0` write/read-verify path.
 - `scripts/inspect_epiphan_firmware.py` now emits offline JSON summaries for Epiphan `.fw` packages, including FX3 records/checksums, FPGA sync offset, package metadata, and firmware-packaged EDID summary/checksum state.
 - `epiphan_config.py` and `scripts/inspect_epiphan_config.py` expose the recovered MI_00 request map and read-only payload parsers as machine-consumable JSON, while keeping write/update requests metadata-only.
-- `EpiphanKVM_SDK.get_config_status()` exposes the approved live read-only MI_00 requests as failure-as-data JSON, and `get_device_health(include_mi00=True)` can include those results for automation. The GUI exposes this through Tools -> Read Config Status as a single on-demand query.
+- `EpiphanKVM_SDK.get_config_status()` exposes the approved live read-only MI_00 requests as failure-as-data JSON, including all three recovered user-mode slots through request `0xB3` with `wValue` values `0`, `1`, and `2`. The GUI exposes this through Tools -> Read Config Status as a single on-demand query.
 - `trace_replay.py` and `scripts/summarize_trace.py` provide a deterministic no-hardware replay foundation for descriptor/status/host-log experiment directories.
 - The official `kvm2usb3.img` has 6 valid FX3 records, 61 transfer chunks, entry `0x4002a114`, checksum `0x19fc6591`, and SHA256 `97c1e45f1af12ff7187275547e690b3105abe21c0f6187b9e99e5cd674fb3f3a`.
 - The official `kvm2usb3-sandbox.img` has 5 valid FX3 records, 51 transfer chunks, entry `0x400207a4`, checksum `0x2f1dea7f`, and SHA256 `f744a812c62208812392d9f085bbfe6f3184a3871c339e21487d6ab2e246e07d`.
