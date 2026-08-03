@@ -25,6 +25,8 @@ $selection = Select-ReRuntime `
     -NoStartDockerDesktop:$NoStartDockerDesktop `
     -StartTimeoutSeconds $StartTimeoutSeconds
 $runtime = $selection.selected_runtime
+$verifyRc = Invoke-ReVerifyContext
+if ($verifyRc -ne 0) { throw "Recorded runtime context verification failed (exit $verifyRc)." }
 
 $envFile = if (Test-Path (Join-Path $repoRoot '.work\re\.env.re.lock')) { '.work/re/.env.re.lock' } else { '.work/re/.env.re' }
 if (-not (Test-Path (Join-Path $repoRoot '.work\re\.env.re'))) {

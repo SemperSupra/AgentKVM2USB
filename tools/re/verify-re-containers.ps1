@@ -19,6 +19,8 @@ $selection = Select-ReRuntime `
     -StartTimeoutSeconds $StartTimeoutSeconds
 $runtime = $selection.selected_runtime
 Write-Host "Verifying with runtime: $runtime ($($selection.selection_reason))"
+$verifyRc = Invoke-ReVerifyContext
+if ($verifyRc -ne 0) { throw "Recorded runtime context verification failed (exit $verifyRc)." }
 
 $envFile = if (Test-Path (Join-Path $repoRoot '.work\re\.env.re.lock')) { '.work/re/.env.re.lock' } else { '.work/re/.env.re' }
 if (-not (Test-Path (Join-Path $repoRoot '.work\re\.env.re'))) {

@@ -22,6 +22,8 @@ $selection = Select-ReRuntime `
     -StartTimeoutSeconds $StartTimeoutSeconds
 $runtime = $selection.selected_runtime
 Write-Host "Uninstalling with runtime: $runtime"
+$verifyRc = Invoke-ReVerifyContext
+if ($verifyRc -ne 0) { throw "Recorded runtime context verification failed (exit $verifyRc)." }
 
 # Best-effort teardown of project containers, networks, volumes, and images
 # through the same adapter used by bootstrap/verify/run.

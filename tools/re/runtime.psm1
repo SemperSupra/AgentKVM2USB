@@ -123,6 +123,21 @@ function Invoke-ReCompose {
     return Invoke-RePythonRunner -Command 'compose' -CommandArgs @($ComposeArgs)
 }
 
+function Invoke-ReVerifyContext {
+    <#
+    Fail closed unless the recorded runtime still resolves as selected. For
+    Docker Desktop this verifies the recorded context still exists, still
+    resolves to the recorded Linux endpoint, and still reports Linux containers.
+    Call before significant operations so a redirected/removed context aborts
+    instead of silently running against another daemon.
+    #>
+    $repoRoot = Get-ReRepoRoot
+    $py = Get-RePythonExe
+    $runtimeJson = Get-ReRuntimeJsonPath
+    & $py 'tools/re/re_runtime.py' 'verify-context' '--runtime-json' $runtimeJson '--repo-root' $repoRoot
+    return $LASTEXITCODE
+}
+
 function Invoke-ReBashScript {
     <#
     Run a repository bash script through the WSL Engine adapter. Desktop mode

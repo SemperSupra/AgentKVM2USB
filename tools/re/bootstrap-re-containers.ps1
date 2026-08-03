@@ -48,6 +48,14 @@ $selection = Select-ReRuntime `
     -StartTimeoutSeconds $StartTimeoutSeconds
 $runtime = $selection.selected_runtime
 Write-Host "Selected runtime: $runtime ($($selection.selection_reason))"
+if ($runtime -eq 'DockerDesktop') {
+    Write-Host "Pinned Desktop context: $($selection.metadata.context) -> $($selection.metadata.endpoint)"
+}
+
+# Fail closed unless the recorded runtime still resolves as selected before any
+# significant Docker operation (pulls, builds, locks, scans, cleanup).
+$verifyRc = Invoke-ReVerifyContext
+if ($verifyRc -ne 0) { throw "Recorded runtime context verification failed (exit $verifyRc)." }
 
 $inventoryScript = Join-Path $PSScriptRoot 'inventory-totalphase.ps1'
 $inventoryPath = Join-Path $repoRoot '.work\vendor\totalphase\inventory.json'
@@ -104,11 +112,11 @@ else {
         if ($LASTEXITCODE -ne 0) { throw 'Community Ghidra image pull failed.' }
     }
 
+    # Versioned publisher tags only; the unused angr/angr image is not pulled.
     $pullImages = @(
         'radare/radare2:6.1.8',
-        'angr/angr:latest',
-        'anchore/syft:latest',
-        'aquasec/trivy:latest'
+        'anchore/syft:v1.19.0',
+        'aquasec/trivy:0.57.1'
     )
     foreach ($image in $pullImages) {
         Invoke-ReDocker -- pull $image
@@ -120,19 +128,45 @@ else {
     # inline embedded-quote form mangles commas inside --mount args.
     New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot '.work\re\cache\trivy') | Out-Null
     $trivyMount = "type=bind,src=$(Join-Path $repoRoot '.work\re\cache\trivy'),dst=/root/.cache/trivy"
-    Invoke-ReDocker -- run --rm --mount $trivyMount aquasec/trivy:latest image --download-db-only
+    Invoke-ReDocker -- run --rm --mount $trivyMount aquasec/trivy:0.57.1 image --download-db-only
     if ($LASTEXITCODE -ne 0) {
         Write-Warning 'Trivy database prefetch failed; offline vulnerability scans will be unavailable until it succeeds.'
     }
 
+    # Resolve the official Python base to an immutable digest and record it as a
+    # build input before building the runner.
+    $py = Get-RePythonExe
+    $baseLock = Join-Path $repoRoot '.work\re\base-image.lock.json'
+    $baseDigest = & $py 'tools/re/resolve_base_image.py' `
+        --image 'python:3.12-slim-bookworm' `
+        --output $baseLock `
+        --repo-root $repoRoot
+    if ($LASTEXITCODE -ne 0) { throw "Base image resolution failed with exit code $LASTEXITCODE" }
+    $baseDigest = ($baseDigest | Select-Object -Last 1).Trim()
+    Write-Host "Locked Python base: $baseDigest"
+    # Record the locked base in the human-editable build config so compose passes
+    # it as PYTHON_BASE_IMAGE to the runner build.
+    $envText = Get-Content -LiteralPath $envPath
+    $updated = @()
+    $set = $false
+    foreach ($line in $envText) {
+        if ($line -match '^PYTHON_BASE_IMAGE=') {
+            $updated += "PYTHON_BASE_IMAGE=$baseDigest"
+            $set = $true
+        }
+        else { $updated += $line }
+    }
+    if (-not $set) { $updated += "PYTHON_BASE_IMAGE=$baseDigest" }
+    Set-Content -LiteralPath $envPath -Value $updated -Encoding UTF8
+
     Invoke-ReCompose -- --env-file $envFile -f compose.re.yml build runner
     if ($LASTEXITCODE -ne 0) { throw "runner image build failed with exit code $LASTEXITCODE" }
 
-    $py = Get-RePythonExe
-    & $py 'tools/re/write-image-lock.py' `
+    & $py 'tools/re/write_image_lock.py' `
         --env-file (Join-Path $repoRoot $envFile) `
         --locked-env (Join-Path $repoRoot '.work\re\.env.re.lock') `
-        --output (Join-Path $repoRoot '.work\re\images.lock.json')
+        --output (Join-Path $repoRoot '.work\re\images.lock.json') `
+        --repo-root $repoRoot
     if ($LASTEXITCODE -ne 0) { throw "Image lock failed with exit code $LASTEXITCODE" }
 
     Invoke-ReCompose -- --env-file $envFile -f compose.re.yml config | Out-Null

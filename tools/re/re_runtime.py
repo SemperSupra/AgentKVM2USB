@@ -109,23 +109,63 @@ def probe_result(
     }
 
 
-def _active_docker_context(run: Runner, docker: str) -> Dict[str, str]:
-    info: Dict[str, str] = {}
+def _list_context_names(run: Runner, docker: str) -> List[str]:
+    r = run([docker, "context", "ls", "--format", "{{.Name}}"], capture=True)
+    if r.returncode != 0:
+        return []
+    return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+
+
+def _active_context_name(run: Runner, docker: str) -> Optional[str]:
     r = run([docker, "context", "show"], capture=True)
     if r.returncode == 0:
-        info["active_context"] = r.stdout.strip()
-    r = run([docker, "context", "ls"], capture=True)
+        name = r.stdout.strip()
+        return name or None
+    return None
+
+
+def _context_endpoint(run: Runner, docker: str, name: str) -> str:
+    r = run([docker, "context", "inspect", name, "--format", "{{.Endpoints.docker.Host}}"], capture=True)
     if r.returncode == 0:
-        for line in r.stdout.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("*"):
-                parts = stripped.split()
-                if parts:
-                    info["context"] = parts[0]
-                if len(parts) >= 2:
-                    info["endpoint"] = parts[-1]
-                break
-    return info
+        return r.stdout.strip()
+    return ""
+
+
+def _find_desktop_linux_context(run: Runner, docker: str) -> Optional[Dict[str, Any]]:
+    """Find the Docker Desktop-owned Linux context without mutating the global
+    context. A context is Desktop-owned when its endpoint is the Desktop Linux
+    engine pipe (dockerDesktopLinuxEngine) or its name is ``desktop-linux``."""
+    names = _list_context_names(run, docker)
+    active = _active_context_name(run, docker)
+    ordered: List[str] = []
+    if active and active in names:
+        ordered.append(active)
+    ordered.extend(n for n in names if n not in ordered)
+    for name in ordered:
+        endpoint = _context_endpoint(run, docker, name)
+        is_desktop_endpoint = "dockerdesktoplinuxengine" in endpoint.lower()
+        is_desktop_name = name.lower() == "desktop-linux"
+        if is_desktop_endpoint or is_desktop_name:
+            return {
+                "name": name,
+                "endpoint": endpoint,
+                "active": name == active,
+                "active_context_name": active,
+            }
+    return None
+
+
+def _installed_desktop_evidence(run: Runner, docker: str) -> List[str]:
+    """Read-only evidence that Docker Desktop itself is installed, for older
+    Desktop versions where ``docker desktop status`` is unsupported."""
+    evidence: List[str] = []
+    r = run([docker, "desktop", "--help"], capture=True)
+    if r.returncode == 0:
+        evidence.append("docker-desktop-cli-plugin")
+    r = run(["sc", "query", "com.docker.service"], capture=True)
+    if r.returncode == 0:
+        evidence.append("com.docker.service")
+    return evidence
 
 
 def probe_docker_desktop(
@@ -136,9 +176,15 @@ def probe_docker_desktop(
 ) -> Dict[str, Any]:
     """Probe the Windows Docker Desktop candidate for actual usability.
 
-    Records distinct causes: ``docker_cli_missing``, ``desktop_status_unsupported``,
-    ``start_disabled``, ``start_failed``, ``start_timeout``,
-    ``daemon_unavailable``, ``windows_container_mode``, ``compose_missing``.
+    Requires *positive* Docker Desktop identity and records the Desktop-owned
+    Linux context/endpoint as part of the immutable runtime decision. A custom
+    or remote Windows Docker context that merely reaches a Linux daemon is
+    rejected; the user's global Docker context is never mutated.
+
+    Records distinct causes: ``docker_cli_missing``, ``desktop_identity_unsupported``,
+    ``no_desktop_linux_context``, ``start_disabled``, ``start_failed``,
+    ``start_timeout``, ``daemon_unavailable``, ``windows_container_mode``,
+    ``compose_missing``.
     """
     diag: List[str] = []
     details: Dict[str, Any] = {}
@@ -157,28 +203,56 @@ def probe_docker_desktop(
     else:
         diag.append(f"docker --version failed: {r.stderr.strip()[:200]}")
 
-    # `docker desktop status --format json` is supported by recent Desktop
-    # versions; older installs fall back to docker info alone.
+    # ---- Positive Docker Desktop identity ----
+    # Preferred: supported `docker desktop status --format json`. For older
+    # Desktop versions, installed Desktop evidence plus a Desktop-owned Linux
+    # context is required. An arbitrary custom/remote context is never accepted.
     status: Optional[Dict[str, Any]] = None
     r = run([docker, "desktop", "status", "--format", "json"], capture=True)
     if r.returncode == 0:
         try:
             status = json.loads(r.stdout)
             details["desktop_status"] = status
+            details["desktop_identity"] = "desktop-status"
         except ValueError:
-            diag.append(f"docker desktop status returned non-JSON output: {r.stdout.strip()[:200]}")
+            diag.append("docker desktop status returned non-JSON output; requiring installed Desktop evidence")
     else:
-        diag.append("docker desktop status --format json is unsupported here; falling back to docker info")
+        diag.append("docker desktop status --format json is unsupported; requiring installed Desktop evidence + Desktop-owned context")
 
-    details.update(_active_docker_context(run, docker))
-    available = True
+    if details.get("desktop_identity") != "desktop-status":
+        evidence = _installed_desktop_evidence(run, docker)
+        details["desktop_installed_evidence"] = evidence
+        if not evidence:
+            return probe_result(
+                "DockerDesktop", True, False, "desktop_identity_unsupported",
+                diag + ["No supported docker desktop status and no installed Docker Desktop evidence "
+                        "(docker desktop CLI plugin or com.docker.service). A custom/remote Windows "
+                        "Docker context is not accepted as Docker Desktop."],
+                details,
+            )
+        details["desktop_identity"] = "installed-evidence"
+
+    # ---- Desktop-owned Linux context (never mutates the global context) ----
+    ctx = _find_desktop_linux_context(run, docker)
+    if not ctx:
+        return probe_result(
+            "DockerDesktop", True, False, "no_desktop_linux_context",
+            diag + ["No Docker Desktop-owned Linux context (desktop-linux or a dockerDesktopLinuxEngine "
+                    "endpoint) was found."],
+            details,
+        )
+    details["selected_context"] = ctx["name"]
+    details["context"] = ctx["name"]
+    details["endpoint"] = ctx["endpoint"]
+    details["context_is_active"] = ctx["active"]
+    details["active_context"] = ctx.get("active_context_name")
 
     def _info_result() -> Tuple[bool, str]:
-        """Return (ok, failure_reason). Failure reason distinguishes a Linux
-        daemon that is unavailable from Docker Desktop running Windows containers."""
-        r = run([docker, "info"], capture=True)
+        """Return (ok, failure_reason). The daemon is queried through the
+        recorded Desktop context explicitly."""
+        r = run([docker, "--context", ctx["name"], "info"], capture=True)
         if r.returncode != 0:
-            diag.append(f"docker info failed: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}")
+            diag.append(f"docker --context {ctx['name']} info failed: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}")
             return False, "daemon_unavailable"
         ostype, server = parse_docker_info(r.stdout)
         details["server_os"] = ostype
@@ -229,9 +303,9 @@ def probe_docker_desktop(
         else:
             return probe_result("DockerDesktop", True, False, info_fail_reason or "daemon_unavailable", diag, details)
     else:
-        diag.append("docker info succeeded with Linux containers")
+        diag.append(f"docker --context {ctx['name']} info succeeded with Linux containers")
 
-    r = run([docker, "compose", "version"], capture=True)
+    r = run([docker, "--context", ctx["name"], "compose", "version"], capture=True)
     if r.returncode != 0:
         return probe_result(
             "DockerDesktop", True, False, "compose_missing",
@@ -374,20 +448,26 @@ def _describe_failure(probes: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]
     ]
 
 
-def _build_metadata(probes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def _build_selected_metadata(selected: str, probes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Build top-level runtime metadata exclusively from the selected probe.
+
+    A present-but-unhealthy nonselected candidate must not leak client, server,
+    context, endpoint, or Compose values into the selected metadata. Candidate
+    sub-objects remain labeled for diagnostics.
+    """
     d = probes["DockerDesktop"]["details"]
     w = probes["WslEngine"]["details"]
-    return {
+    base: Dict[str, Any] = {
         "os_type": "windows" if os.name == "nt" else os.name,
-        "client_version": d.get("client_version") or w.get("client_version"),
-        "server_version": d.get("server_version") or w.get("server_version"),
-        "server_os": d.get("server_os") or w.get("server_os"),
-        "compose_version": d.get("compose_version") or w.get("compose_version"),
+        "selected_runtime": selected,
         "docker_desktop": {
-            "context": d.get("context"),
-            "active_context": d.get("active_context"),
+            "context": d.get("selected_context") or d.get("context"),
             "endpoint": d.get("endpoint"),
+            "active_context": d.get("active_context"),
+            "context_is_active": d.get("context_is_active"),
             "desktop_status": d.get("desktop_status"),
+            "desktop_identity": d.get("desktop_identity"),
+            "desktop_installed_evidence": d.get("desktop_installed_evidence"),
             "client_version": d.get("client_version"),
             "server_version": d.get("server_version"),
             "server_os": d.get("server_os"),
@@ -404,6 +484,23 @@ def _build_metadata(probes: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
             "compose_version": w.get("compose_version"),
         },
     }
+    if selected == "DockerDesktop":
+        base["client_version"] = d.get("client_version")
+        base["server_version"] = d.get("server_version")
+        base["server_os"] = d.get("server_os")
+        base["compose_version"] = d.get("compose_version")
+        base["context"] = d.get("selected_context") or d.get("context")
+        base["endpoint"] = d.get("endpoint")
+    else:
+        base["client_version"] = w.get("client_version")
+        base["server_version"] = w.get("server_version")
+        base["server_os"] = w.get("server_os")
+        base["compose_version"] = w.get("compose_version")
+        base["context"] = None
+        base["endpoint"] = None
+        base["wsl_distribution"] = w.get("wsl_distribution")
+        base["wsl_version"] = w.get("wsl_version")
+    return base
 
 
 def select_runtime(
@@ -446,8 +543,9 @@ def select_runtime(
             reason = f"explicit WslEngine selection is unavailable: {wsl['reason']}"
     else:
         if desktop["healthy"] and wsl["healthy"]:
-            context = (desktop["details"].get("active_context") or desktop["details"].get("context") or "").lower()
-            if "desktop" in context:
+            active_ctx = (desktop["details"].get("active_context") or "").lower()
+            recorded_ctx = (desktop["details"].get("context") or "").lower()
+            if active_ctx and recorded_ctx and active_ctx == recorded_ctx:
                 selected = "DockerDesktop"
                 reason = "both healthy; active Docker Desktop Linux context preferred"
             else:
@@ -473,7 +571,7 @@ def select_runtime(
         "probes": probes,
     }
     if selected:
-        selection["metadata"] = _build_metadata(probes)
+        selection["metadata"] = _build_selected_metadata(selected, probes)
     else:
         selection["selection_error"] = _describe_failure(probes)
     return selection
@@ -551,6 +649,23 @@ class Adapter:
         self._wsl_exe = wsl_exe or (shutil.which("wsl") or "wsl.exe")
         self._wsl_repo_path: Optional[str] = None
         self._path_cache: Dict[str, str] = {}
+        # Desktop mode pins the recorded context/endpoint as part of the
+        # immutable runtime decision; every docker operation uses it explicitly.
+        self._context: Optional[str] = None
+        self._endpoint: Optional[str] = None
+        if self.runtime == "DockerDesktop":
+            meta = selection.get("metadata") or {}
+            dd = meta.get("docker_desktop") or {}
+            self._context = dd.get("context") or dd.get("selected_context")
+            self._endpoint = dd.get("endpoint")
+
+    @property
+    def recorded_context(self) -> Optional[str]:
+        return self._context
+
+    @property
+    def recorded_endpoint(self) -> Optional[str]:
+        return self._endpoint
 
     @property
     def wsl_repo_path(self) -> str:
@@ -581,7 +696,10 @@ class Adapter:
 
     def docker(self, args: Sequence[str]) -> List[str]:
         if self.runtime == "DockerDesktop":
-            return ["docker", *args]
+            base = ["docker"]
+            if self._context:
+                base += ["--context", self._context]
+            return base + list(args)
         return [
             self._wsl_exe,
             "--cd",
@@ -595,6 +713,42 @@ class Adapter:
 
     def compose(self, args: Sequence[str]) -> List[str]:
         return self.docker(["compose", *args])
+
+    def verify_context(self) -> ProcResult:
+        """Fail closed before significant operations.
+
+        The recorded Desktop context must still exist, resolve to the recorded
+        endpoint, and report a Linux daemon. A missing/changed context, a
+        redirected endpoint, or Windows containers aborts with non-zero.
+        """
+        if self.runtime != "DockerDesktop":
+            return ProcResult(0, "", "")
+        if not self._context:
+            return ProcResult(2, "", "no recorded Docker Desktop context; refusing to run")
+        r = self._run(
+            ["docker", "--context", self._context, "context", "inspect", self._context,
+             "--format", "{{.Endpoints.docker.Host}}"],
+            capture=True,
+        )
+        if r.returncode != 0:
+            return ProcResult(2, r.stdout, f"recorded Docker Desktop context {self._context!r} is missing")
+        endpoint = r.stdout.strip()
+        if self._endpoint and endpoint and endpoint != self._endpoint:
+            return ProcResult(
+                3, "",
+                f"recorded Docker Desktop context {self._context!r} endpoint changed "
+                f"from {self._endpoint!r} to {endpoint!r}",
+            )
+        r = self._run(["docker", "--context", self._context, "info"], capture=True)
+        if r.returncode != 0:
+            return ProcResult(4, r.stdout, f"docker --context {self._context!r} info failed")
+        ostype, _server = parse_docker_info(r.stdout)
+        if ostype and ostype != "linux":
+            return ProcResult(
+                5, "",
+                f"recorded Docker Desktop context {self._context!r} reports {ostype!r} containers, not Linux",
+            )
+        return ProcResult(0, "", "")
 
     def bash(self, script_rel: str, script_args: Sequence[str] = (), env: Optional[Dict[str, str]] = None) -> List[str]:
         """Invoke a repository bash script inside the WSL distribution. Desktop
@@ -698,6 +852,15 @@ def _cli_beagle_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cli_verify_context(args: argparse.Namespace) -> int:
+    selection = read_runtime_json(args.runtime_json)
+    adapter = Adapter(selection, args.repo_root)
+    result = adapter.verify_context()
+    if result.returncode != 0:
+        print(result.stderr or result.stdout, file=sys.stderr)
+    return result.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -742,6 +905,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_route.add_argument("--runtime-json", required=True)
     p_route.add_argument("--repo-root", required=True)
     p_route.set_defaults(func=_cli_beagle_route)
+
+    p_verify = sub.add_parser(
+        "verify-context",
+        help="fail closed unless the recorded Desktop context still resolves to the recorded Linux endpoint",
+    )
+    p_verify.add_argument("--runtime-json", required=True)
+    p_verify.add_argument("--repo-root", required=True)
+    p_verify.set_defaults(func=_cli_verify_context)
     return parser
 
 
