@@ -6,9 +6,14 @@ import numpy as np
 import threading
 import subprocess
 from PySide6.QtCore import Qt, QTimer, QSize, QPoint
-from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor, QPalette
+from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor, QPalette, QPainter
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                              QWidget, QStatusBar, QToolBar, QFileDialog, QMessageBox, QStyle)
+try:
+    from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+except Exception:
+    QPrintDialog = None
+    QPrinter = None
 from epiphan_sdk import EpiphanKVM_SDK
 from settings_dialog import SettingsDialog
 
@@ -92,6 +97,7 @@ class KvmAppGUI(QMainWindow):
         file_m = mb.addMenu("&File")
         file_m.addAction("&Save Still Image...", self.save_screenshot, QKeySequence.Save)
         file_m.addAction("&Copy Still Image to Buffer", self.copy_to_clipboard, "Ctrl+C")
+        file_m.addAction("&Print Still Image...", self.print_current_frame, QKeySequence.Print)
         file_m.addSeparator()
         file_m.addAction("Cleanup Old Session Data...", self.cleanup_data)
         file_m.addSeparator()
@@ -113,6 +119,8 @@ class KvmAppGUI(QMainWindow):
         tools_m = mb.addMenu("&Tools")
         tools_m.addAction("Send Ctrl+Alt+Del", lambda: self.sdk.hotkey("ctrl", "alt", "delete"))
         tools_m.addAction("Send Alt+Tab", lambda: self.sdk.hotkey("alt", "tab"))
+        tools_m.addAction("Send Alt+Space", lambda: self.sdk.hotkey("alt", "space"))
+        tools_m.addAction("Send GUI/Windows Key", lambda: self.sdk.hotkey("gui"))
         tools_m.addSeparator()
         self.rec_act = tools_m.addAction("Start &Recording session", self.toggle_recording)
         
@@ -346,6 +354,29 @@ class KvmAppGUI(QMainWindow):
                 qi = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
                 QGuiApplication.clipboard().setImage(qi)
                 self.status.showMessage("Frame copied to clipboard", 3000)
+
+    def print_current_frame(self):
+        if QPrintDialog is None or QPrinter is None:
+            QMessageBox.warning(self, "Print Unavailable", "Qt print support is not available in this environment.")
+            return
+        frame = self.sdk.get_processed_frame()
+        if frame is None:
+            QMessageBox.warning(self, "Print", "No frame is available to print.")
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        image = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888).copy()
+        high_resolution = getattr(getattr(QPrinter, "PrinterMode", QPrinter), "HighResolution")
+        printer = QPrinter(high_resolution)
+        dialog = QPrintDialog(printer, self)
+        if dialog.exec() != QPrintDialog.Accepted:
+            return
+        painter = QPainter(printer)
+        viewport = painter.viewport()
+        scaled = image.scaled(viewport.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawImage((viewport.width() - scaled.width()) // 2, (viewport.height() - scaled.height()) // 2, scaled)
+        painter.end()
+        self.status.showMessage("Frame sent to printer", 3000)
 
     def save_screenshot(self):
         path = self.sdk.get_screen(prefix=self.user_prefix)
