@@ -131,7 +131,18 @@ Implemented now:
 - Offline FX3 image parsing and checksum validation.
 - Offline FX3 transfer chunk planning.
 - Offline FPGA bitstream sync-word detection.
+- Offline Epiphan text EDID extraction and checksum validation.
+- Offline firmware package inspection through
+  `scripts/inspect_epiphan_firmware.py`.
 - Unit tests for the recovered container formats.
+
+Example:
+
+```powershell
+.venv\Scripts\python.exe scripts\inspect_epiphan_firmware.py `
+  .work\epiphan-downloads\firmware-kvm2usb3-uvc-4.0.0-r39896.fw `
+  --pretty
+```
 
 Deferred:
 

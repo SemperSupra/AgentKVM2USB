@@ -84,6 +84,8 @@ sdk.close()
 - `MACROS.md`: Documentation for the Macro Engine DSL.
 - `PACKAGING.md`: Local Windows artifact, release, and Package Foundry guidance.
 - `scripts/`: Local portable-build and GitHub Release scripts.
+- `scripts/inspect_epiphan_firmware.py`: Offline parser for Epiphan `.fw`,
+  FX3 `.img`, FPGA `.bin`, EDID text dumps, and package metadata.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:

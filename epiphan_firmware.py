@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import re
 from typing import Iterable
 
 
@@ -66,6 +67,25 @@ class FpgaBitstream:
     @property
     def has_sync_word(self) -> bool:
         return self.sync_offset >= 0
+
+
+@dataclass(frozen=True)
+class EdidSummary:
+    raw: bytes
+    sha256: str
+    block_checksums: tuple[bool, ...]
+    manufacturer_id: str
+    product_code: int
+    version: str
+    monitor_name: str | None
+
+    @property
+    def block_count(self) -> int:
+        return len(self.raw) // 128
+
+    @property
+    def checksums_valid(self) -> bool:
+        return bool(self.block_checksums) and all(self.block_checksums)
 
 
 def _read_u32le(data: bytes, offset: int) -> int:
@@ -134,4 +154,49 @@ def parse_fpga_bitstream(data: bytes) -> FpgaBitstream:
         preamble=data[:best_offset] if best_offset >= 0 else data,
         payload=data[best_offset:] if best_offset >= 0 else b"",
         sha256=hashlib.sha256(data).hexdigest(),
+    )
+
+
+def parse_epiphan_text_edid(data: bytes | str) -> bytes:
+    """Extract raw EDID bytes from Epiphan's text-formatted EDID dump."""
+    if isinstance(data, bytes):
+        text = data.decode("ascii", errors="ignore")
+    else:
+        text = data
+    values = []
+    for line in text.splitlines():
+        if "|" not in line:
+            continue
+        _addr, byte_text = line.split("|", 1)
+        values.extend(int(match, 16) for match in re.findall(r"\b[0-9A-Fa-f]{2}\b", byte_text))
+    return bytes(values)
+
+
+def summarize_edid(raw: bytes) -> EdidSummary:
+    raw = bytes(raw)
+    if len(raw) < 128 or len(raw) % 128:
+        raise ValueError("EDID byte length must be a non-zero multiple of 128")
+    if raw[:8] != bytes.fromhex("00 ff ff ff ff ff ff 00"):
+        raise ValueError("EDID header is invalid")
+
+    manufacturer = ((raw[8] << 8) | raw[9])
+    manufacturer_id = "".join(
+        chr(((manufacturer >> shift) & 0x1F) + 0x40)
+        for shift in (10, 5, 0)
+    )
+    monitor_name = None
+    for offset in range(54, 126, 18):
+        descriptor = raw[offset:offset + 18]
+        if descriptor[:5] == b"\x00\x00\x00\xfc\x00":
+            monitor_name = descriptor[5:18].split(b"\x0a", 1)[0].decode("ascii", errors="ignore").strip()
+            break
+
+    return EdidSummary(
+        raw=raw,
+        sha256=hashlib.sha256(raw).hexdigest(),
+        block_checksums=tuple(sum(raw[offset:offset + 128]) % 256 == 0 for offset in range(0, len(raw), 128)),
+        manufacturer_id=manufacturer_id,
+        product_code=int.from_bytes(raw[10:12], "little"),
+        version=f"{raw[18]}.{raw[19]}",
+        monitor_name=monitor_name or None,
     )

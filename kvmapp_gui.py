@@ -280,9 +280,18 @@ class KvmAppGUI(QMainWindow):
     def mouseMoveEvent(self, event):
         if self.is_grabbed and self.mouse_mode == "absolute":
             lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
-            x_p = event.position().x() / lbl_w
-            y_p = event.position().y() / lbl_h
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            x_p = local_pos.x() / lbl_w
+            y_p = local_pos.y() / lbl_h
             self.sdk.click(x_p, y_p, button=0)
+        elif self.is_grabbed and self.mouse_mode == "relative":
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            delta = local_pos - self.video_label.rect().center()
+            dx = int(delta.x())
+            dy = int(delta.y())
+            if dx or dy:
+                self.sdk.move_mouse_relative(dx, dy)
+                QCursor.setPos(self.video_label.mapToGlobal(self.video_label.rect().center()))
 
     def mousePressEvent(self, event):
         if not self.is_grabbed:
@@ -290,9 +299,19 @@ class KvmAppGUI(QMainWindow):
             return
             
         btn = 1 if event.button() == Qt.LeftButton else 2
-        x_p = event.position().x() / self.video_label.width()
-        y_p = event.position().y() / self.video_label.height()
-        self.sdk.click(x_p, y_p, button=btn)
+        if self.mouse_mode == "relative":
+            self.sdk.mouse_click_relative(btn)
+        else:
+            local_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            x_p = local_pos.x() / self.video_label.width()
+            y_p = local_pos.y() / self.video_label.height()
+            self.sdk.click(x_p, y_p, button=btn)
+
+    def wheelEvent(self, event):
+        if self.is_grabbed:
+            steps = event.angleDelta().y() // 120
+            if steps:
+                self.sdk.scroll_mouse(steps)
 
     # --- ACTIONS ---
 

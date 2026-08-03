@@ -5,7 +5,8 @@ import cv2
 import numpy as np
 import json
 import re
-from epiphan_firmware import parse_fpga_bitstream, parse_fx3_image
+from epiphan_firmware import parse_epiphan_text_edid, parse_fpga_bitstream, parse_fx3_image, summarize_edid
+from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 from hardware_probe import effective_signal, frame_stats, parse_dshow_options
@@ -84,6 +85,8 @@ class TestEpiphanKVM_Enhanced:
         spy_press = mocker.spy(sdk, 'press')
         spy_hotkey = mocker.spy(sdk, 'hotkey')
         spy_click = mocker.spy(sdk, 'click')
+        spy_move = mocker.spy(sdk, 'move_mouse_relative')
+        spy_scroll = mocker.spy(sdk, 'scroll_mouse')
 
         macro_script = """
         # This is a comment
@@ -92,6 +95,8 @@ class TestEpiphanKVM_Enhanced:
         PRESS enter
         HOTKEY ctrl alt delete
         CLICK 0.5 0.5 2
+        MOVE 10 -5
+        SCROLL -1
         """
 
         sdk.run_macro(macro_script)
@@ -113,6 +118,12 @@ class TestEpiphanKVM_Enhanced:
 
         assert spy_click.called
         assert spy_click.call_args_list[0][0] == (0.5, 0.5, 2)
+
+        assert spy_move.called
+        assert spy_move.call_args_list[0][0] == (10, -5, 0)
+
+        assert spy_scroll.called
+        assert spy_scroll.call_args_list[0][0] == (-1,)
 
         # Test error handling (should not crash)
         sdk.run_macro("INVALID_CMD")
@@ -160,6 +171,21 @@ class TestEpiphanKVM_Enhanced:
         sdk._raw_kb(0x01, [EpiphanKVM_SDK.KEY_MAP["delete"]])
 
         assert reports == [[1, 1, 0, 76, 0, 0, 0, 0, 0]]
+
+    def test_raw_mouse_uses_vendor_report_id_and_clamps_signed_deltas(self):
+        """Matches the official KvmApp relative mouse HID output framing."""
+        reports = []
+
+        class FakeMouseDevice:
+            def write(self, report):
+                reports.append(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.mouse_dev = FakeMouseDevice()
+
+        sdk._raw_mouse(0x01, 200, -200, 5)
+
+        assert reports == [[2, 1, 127, 129, 5]]
 
     def test_feature_reports_use_vendor_report_ids(self, mocker):
         """Covers recovered touch-type and re-enumeration feature reports offline."""
@@ -343,6 +369,50 @@ class TestEpiphanKVM_Enhanced:
         assert bitstream.sync_word == bytes.fromhex("55 99 aa 66")
         assert bitstream.preamble == b"\xff" * 16
         assert bitstream.payload.startswith(bytes.fromhex("55 99 aa 66"))
+
+    def test_inspect_epiphan_firmware_payload_summarizes_fx3_image(self):
+        record_data = (0x11111111).to_bytes(4, "little")
+        image_bytes = (
+            b"CY"
+            + bytes([0x1C, 0xB0])
+            + (1).to_bytes(4, "little")
+            + (0x40003000).to_bytes(4, "little")
+            + record_data
+            + (0).to_bytes(4, "little")
+            + (0x40000100).to_bytes(4, "little")
+            + (0x11111111).to_bytes(4, "little")
+        )
+
+        summary = inspect_payload("kvm2usb3.img", image_bytes)
+
+        assert summary["kind"] == "fx3_image"
+        assert summary["checksum_valid"] is True
+        assert summary["record_count"] == 1
+        assert summary["records"] == [{"address": 0x40003000, "word_count": 1, "byte_count": 4}]
+
+    def test_parse_epiphan_text_edid_and_checksum(self):
+        base = bytearray(128)
+        base[:8] = bytes.fromhex("00 ff ff ff ff ff ff 00")
+        base[8:10] = bytes.fromhex("16 08")
+        base[10:12] = (0x3661).to_bytes(2, "little")
+        base[18] = 1
+        base[19] = 3
+        name = b"KVM2USB 3.0\n"
+        base[54:72] = b"\x00\x00\x00\xfc\x00" + name + b" " * (13 - len(name))
+        base[127] = (-sum(base[:127])) & 0xFF
+        edid_text = "0000 | " + " ".join(f"{byte:02X}" for byte in base[:16]) + "\n"
+        for offset in range(16, 128, 16):
+            edid_text += f"{offset:04X} | " + " ".join(f"{byte:02X}" for byte in base[offset:offset + 16]) + "\n"
+
+        raw = parse_epiphan_text_edid(edid_text)
+        summary = summarize_edid(raw)
+
+        assert raw == bytes(base)
+        assert summary.checksums_valid is True
+        assert summary.manufacturer_id == "EPH"
+        assert summary.product_code == 0x3661
+        assert summary.version == "1.3"
+        assert summary.monitor_name == "KVM2USB 3.0"
 
     def test_runtime_session_directory_groups_outputs(self, sdk):
         """Ensures runtime outputs are correlated under a per-session directory."""

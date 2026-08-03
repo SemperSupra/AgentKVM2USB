@@ -60,6 +60,7 @@ Observed:
 - Static vendor artifact findings are tracked in `VENDOR_ARTIFACTS.md`. The KVM App WinUSB INF binds `VID_2B77&PID_3661&MI_00` as `KVM2USB 3.0 Configuration` and registers interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`.
 - The firmware `.fw` package contains a validated KVM2USB 3.0 EDID hex dump with manufacturer `EPH`, two valid EDID blocks, and base detailed timings for `1920x1080`, `1280x720`, and `1920x1200` near 60 Hz.
 - `epiphan_firmware.py` now parses Cypress FX3 `.img` firmware containers offline, validates the 32-bit data-word checksum, and produces the same `0x1000`-bounded address chunks used by the vendor updater's request `0xA0` write/read-verify path.
+- `scripts/inspect_epiphan_firmware.py` now emits offline JSON summaries for Epiphan `.fw` packages, including FX3 records/checksums, FPGA sync offset, package metadata, and firmware-packaged EDID summary/checksum state.
 - The official `kvm2usb3.img` has 6 valid FX3 records, 61 transfer chunks, entry `0x4002a114`, checksum `0x19fc6591`, and SHA256 `97c1e45f1af12ff7187275547e690b3105abe21c0f6187b9e99e5cd674fb3f3a`.
 - The official `kvm2usb3-sandbox.img` has 5 valid FX3 records, 51 transfer chunks, entry `0x400207a4`, checksum `0x2f1dea7f`, and SHA256 `f744a812c62208812392d9f085bbfe6f3184a3871c339e21487d6ab2e246e07d`.
 - The official FPGA payload `kvm2usb3.bin` has SHA256 `0b917e5ba03ff745c5bb7d09aceec29d255bb72e7027a0fd65c49334e5533d8b` and a Xilinx-style sync word `55 99 aa 66` at offset `0x10`. Packet-level FPGA bitstream decoding remains open.
@@ -71,7 +72,7 @@ Observed:
 - Linux `EpiphanCaptureConfig` disassembly confirms vendor config control transfers through libusb: vendor IN `0xC0`, vendor OUT `0x40`, request `0xB2` for input status, `0xB3` for user modes, `0xE2`/`0xE3` for byte-sized flags, `0xA0` for chunked update/EDID transfer, `0xC4` for one-byte flash-status polling, and `0xC5`/`0xD4` in update/repair flows.
 - Static recovery now maps `InputStatusInfo` fields for config request `0xB2`, three 5-byte `UserMode` records for request `0xB3`, and device flag bits `0x02` preserve aspect ratio, `0x04` performance mode, and `0x10` multichannel audio selector for requests `0xE2`/`0xE3`. The SDK includes offline parsers/builders for recovered input-status, flag, and user-mode payloads.
 - The `0xA0` path writes chunks capped at `0x1000` bytes, verifies them with read-back, splits the 32-bit address across `wValue`/`wIndex`, and sends a final zero-length transfer after checksum validation. Treat this as update/write machinery until a separate read-only EDID path is confirmed.
-- SDK HID output framing now follows the vendor app report IDs for keyboard (`1`) and touch (`5`), with legacy fallback writes retained. Touch-type (`6`) and re-enumerate (`7`) feature reports are exposed but not live-validated because they are write paths.
+- SDK HID output framing now follows the vendor app report IDs for keyboard (`1`), relative mouse (`2`), and touch (`5`), with legacy fallback writes retained. Touch-type (`6`) and re-enumerate (`7`) feature reports are exposed but not live-validated because they are write paths.
 
 Two KVM2USB 3.0 units previously showed USB/HID/UVC enumeration with black captured frames when the target signal path was not negotiating. Interpretation after the latest cable change: the host USB 3.0 link is healthy, the Wyse video is visible through UVC, and the earlier `0x0` status was caused by reading the wrong HID feature report rather than by lack of signal.
 
@@ -109,6 +110,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Installing the official WinUSB config driver for MI_00 is a host-state change and should be explicit. Static analysis indicates it is likely required before read-only config-interface probing can be done through WinUSB/libusb.
 - KVM2USB live mode status is currently read from HID usage `0x103`, feature report `3`. The previous usage `0x104`, feature report `0`, path remains a fallback only.
 - Feature writes for touch type and slave re-enumeration are recovered and unit-tested offline, but still require a safe target session before live validation.
+- Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - SDK configuration helpers are offline-only. They parse/build recovered MI_00 payloads but do not bind WinUSB or send raw USB control requests.
 - Firmware parser helpers are offline-only. They validate and plan image transfers but do not send update, repair, EDID, or flash commands.
 - Linux reverse engineering is valuable and has already recovered more functionality than the stripped Windows binaries. Mac software remains a secondary cross-check unless Linux and Windows disagree.
@@ -126,7 +128,7 @@ Validated locally:
 
 - `python -m compileall -q .`
 - `.venv\Scripts\python.exe -m pytest -v`
-- `.venv\Scripts\python.exe -m pytest -q` (`31 passed`)
+- `.venv\Scripts\python.exe -m pytest -q` (`34 passed`)
 - `python -m json.tool .package-foundry\package.json`
 - `python scripts\build_portable.py`
 - `python hardware_probe.py --capture`

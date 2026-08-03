@@ -16,7 +16,7 @@ engineering outputs are under ignored `.work/re-analysis/`.
 | UVC video capture | Implemented | KVM2USB 3.0 exposes standard UVC; Windows DirectShow/OpenCV capture works at `1920x1080` YUY2/60 fps. |
 | Live input signal/resolution | Implemented | HID usage `0x103`, feature report `3`, returns width, height, and active flag. |
 | Keyboard injection | Implemented, static-confirmed | SDK now emits vendor report ID `1`, length `9`, with a legacy fallback. |
-| Mouse injection | Static-confirmed, not yet surfaced as a public SDK method | Vendor app sends HID output report `2`, length `5`. |
+| Mouse injection | Implemented, static-confirmed, not live-validated | SDK emits vendor report ID `2`, length `5`, for relative movement, button, and wheel reports. |
 | Touch injection | Implemented, static-confirmed | SDK now emits vendor report ID `5`, length `7`, with a legacy fallback. |
 | Touch type selection | Implemented, static-confirmed, not live-validated | SDK exposes feature report `6`, length `2`; this is a write path. |
 | Slave re-enumeration | Implemented, static-confirmed, not live-validated | SDK uses feature report `7`, length `2`; this is a write path. |
@@ -32,7 +32,7 @@ engineering outputs are under ignored `.work/re-analysis/`.
 | EDID validation | Recovered at app level | Config tool parses EDID, checks format/checksum, and reports empty/invalid EDID. |
 | EDID/update transfer | Static-confirmed request family | Config tool uses request `0xA0` for chunked write/read-verify image transfer. This path overlaps update/repair behavior, so live writes are high-risk. |
 | Firmware update/repair | Partially recovered with offline parser | Config tool supports soft/hard repair, firmware package parsing, flash-status polling, FX3 and FPGA flashing. `epiphan_firmware.py` now parses FX3 images, validates checksums, and plans chunks offline. Live implementation remains deferred high-risk work. |
-| Firmware package EDID | Parsed | Package includes validated `EPH` EDID with 1920x1080, 1280x720, and 1920x1200 detailed timings. |
+| Firmware package EDID | Parsed and tool-supported | Package includes validated `EPH` EDID with 1920x1080, 1280x720, and 1920x1200 detailed timings. `scripts/inspect_epiphan_firmware.py` extracts EDID summary fields offline. |
 | FPGA package payload | Partially parsed | `kvm2usb3.bin` has a Xilinx-style sync word `55 99 aa 66` at offset `0x10`; packet-level decoding remains open. |
 | Firmware internals | Initial static inventory | Main firmware image includes ThreadX, Cypress FX3, UVC, HID master/slave, FPGA streaming, ADV7611 audio, EDID, user modes, VESA modes, I2C, SPI storage, GPIF, DMA, LED, and board services. |
 

@@ -383,6 +383,28 @@ class EpiphanKVM_SDK:
         time.sleep(0.1)
         self._raw_touch(0, x, y)
 
+    def move_mouse_relative(self, dx, dy, wheel=0, buttons=0):
+        """Moves the target pointer with the recovered relative mouse HID report."""
+        self._log_event("MOUSE_MOVE_REL", f"dx={dx} dy={dy} wheel={wheel} buttons={buttons}")
+        self._raw_mouse(buttons, dx, dy, wheel)
+
+    def mouse_button(self, button=1, pressed=True):
+        """Sends a relative mouse button state without pointer movement."""
+        self._log_event("MOUSE_BUTTON", f"button={button} pressed={pressed}")
+        buttons = int(button) & 0xFF if pressed else 0
+        self._raw_mouse(buttons, 0, 0, 0)
+
+    def mouse_click_relative(self, button=1):
+        """Clicks using the relative mouse HID collection."""
+        self.mouse_button(button, pressed=True)
+        time.sleep(0.05)
+        self.mouse_button(button, pressed=False)
+
+    def scroll_mouse(self, wheel):
+        """Scrolls using the relative mouse HID collection."""
+        self._log_event("MOUSE_SCROLL", str(wheel))
+        self._raw_mouse(0, 0, 0, wheel)
+
     def type(self, text):
         self._log_event("KEYBOARD_TYPE", text)
         for char in text.lower():
@@ -412,6 +434,8 @@ class EpiphanKVM_SDK:
         - PRESS <key>: Presses a single key.
         - HOTKEY <mod1> <mod2> <key>: Presses a key combination.
         - CLICK <x_percent> <y_percent> [button]: Performs a mouse click.
+        - MOVE <dx> <dy> [wheel]: Performs relative mouse movement.
+        - SCROLL <wheel>: Performs relative mouse wheel movement.
         """
         lines = macro_script.strip().splitlines()
         for line_num, line in enumerate(lines, 1):
@@ -443,6 +467,17 @@ class EpiphanKVM_SDK:
                         self.click(x, y, button)
                     else:
                         print(f"[SDK] Macro Error at line {line_num}: CLICK requires at least x_percent and y_percent")
+                elif cmd == "MOVE":
+                    move_args = [arg.strip() for arg in args.split()]
+                    if len(move_args) >= 2:
+                        dx = int(move_args[0])
+                        dy = int(move_args[1])
+                        wheel = int(move_args[2]) if len(move_args) > 2 else 0
+                        self.move_mouse_relative(dx, dy, wheel)
+                    else:
+                        print(f"[SDK] Macro Error at line {line_num}: MOVE requires dx and dy")
+                elif cmd == "SCROLL":
+                    self.scroll_mouse(int(args.strip()))
                 else:
                     print(f"[SDK] Macro Error at line {line_num}: Unknown command '{cmd}'")
             except Exception as e:
@@ -601,6 +636,23 @@ class EpiphanKVM_SDK:
         r = [0x00]*8; r[0] = mods
         for i, k in enumerate(keys[:6]): r[2+i] = k
         self._write_hid_report(self.kb_dev, [self.HID_REPORT_KEYBOARD] + r, r)
+
+    def _raw_mouse(self, buttons, dx, dy, wheel=0):
+        if not self.mouse_dev:
+            return
+
+        def s8(value):
+            value = min(max(int(value), -127), 127)
+            return value & 0xFF
+
+        report = [
+            self.HID_REPORT_MOUSE,
+            int(buttons) & 0xFF,
+            s8(dx),
+            s8(dy),
+            s8(wheel),
+        ]
+        self._write_hid_report(self.mouse_dev, report, report[1:])
 
     def _raw_touch(self, flags, x, y):
         if not self.touch_dev:

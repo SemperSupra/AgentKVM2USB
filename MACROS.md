@@ -46,3 +46,11 @@ Injects a combination of modifier keys and a final key simultaneously. Valid mod
 ### `CLICK <x_percent> <y_percent> [button]`
 Injects a mouse click event using absolute (touch) positioning, scaled by normalized relative coordinates (0.0 to 1.0). The `button` argument is optional (default: 1). `1` = Left, `2` = Right.
 **Example:** `CLICK 0.5 0.5`
+
+### `MOVE <dx> <dy> [wheel]`
+Injects relative mouse movement using the recovered mouse HID collection. Values are signed deltas clamped to -127..127.
+**Example:** `MOVE 20 -5`
+
+### `SCROLL <wheel>`
+Injects relative mouse wheel movement. Positive values scroll up; negative values scroll down.
+**Example:** `SCROLL -1`
