@@ -32,8 +32,8 @@ analysis databases stay under ignored `.work/` directories.
 | USB trace decoding | Wireshark/TShark | Included in the small project runner because Wireshark does not publish a suitable stateless CLI image for this workflow. |
 | ARM disassembly/debug helpers | GNU Arm binutils, GDB multiarch, QEMU user | Included in the runner from Debian packages. |
 | Binary parsing | Capstone, Kaitai runtime, Construct, PyUSB, Scapy, r2pipe | Version-pinned Python dependencies inside the runner. |
-| SBOM generation | Anchore Syft image | Pull and lock digest; scan a temporary `docker save` archive without mounting the Docker socket. |
-| Vulnerability scanning | Aqua Trivy image | Pull and lock digest; prefetch the database, then scan a temporary image archive offline without mounting the Docker socket. |
+| SBOM generation | Anchore Syft image (`v1.19.0`) | Pull the versioned tag and lock its digest; scan a temporary `docker save` archive without mounting the Docker socket. |
+| Vulnerability scanning | Aqua Trivy image (`0.57.1`) | Pull the versioned tag and lock its digest; prefetch the database, then scan a temporary image archive offline without mounting the Docker socket. |
 | Beagle USB 12 capture | Total Phase Linux x86-64 API | Stage the user-downloaded API under `.work/vendor`; mount it read-only into the runner. |
 
 The only project-authored image is `agentkvm2usb/re-runner`. It contains the glue needed
@@ -54,6 +54,17 @@ uninstall — a runtime never switches silently mid-run.
 
 - Docker Desktop mode runs the Windows `docker`/`docker compose` CLI from the
   Windows repository path and never performs Windows-to-WSL path conversion.
+  It requires **positive Docker Desktop identity**: supported
+  `docker desktop status` evidence, or (for older Desktop versions) installed
+  Desktop application/service evidence plus a Desktop-owned Linux context
+  (`desktop-linux` or a `dockerDesktopLinuxEngine` endpoint). An arbitrary
+  custom or remote Windows context that merely reaches a Linux daemon is
+  rejected. The user's global Docker context is never mutated.
+- Every Docker Desktop command is invoked with the recorded context explicitly
+  (`docker --context <recorded-context> ...`), and the recorded context/endpoint
+  is re-verified before significant operations — a missing, changed, redirected,
+  or Windows-container context fails closed instead of silently running against
+  another daemon.
 - WSL Engine mode runs Docker inside the selected WSL2 distribution through
   `wsl.exe --cd <wsl path> --exec docker`, so the repository path is converted
   once with a discrete `wslpath -a` argument and never re-parsed by a shell.
@@ -65,6 +76,39 @@ uninstall — a runtime never switches silently mid-run.
 - A Docker Desktop that is installed but stopped may be started through
   `docker desktop start` with bounded polling unless `-NoStartDockerDesktop` is
   passed. Docker Desktop and Docker Engine are never installed automatically.
+
+## Reproducible build inputs
+
+- The official Python base image (`python:3.12-slim-bookworm`) is resolved to an
+  immutable digest before the runner build; the digest is recorded in
+  `.work/re/base-image.lock.json` (source repository, requested tag, resolved
+  digest, architecture, retrieval timestamp) and passed to the build as
+  `PYTHON_BASE_IMAGE=python@sha256:<digest>`.
+- Python dependencies are hash-locked: `containers/re-runner/requirements.in` is
+  the human-maintained input, and the generated
+  `containers/re-runner/requirements.lock.txt` (pip-compile `--generate-hashes`)
+  is installed with `--require-hashes`.
+- Debian package versions are captured in the generated CycloneDX/SPDX SBOMs.
+- All pulled images use versioned publisher tags and are resolved to immutable
+  digests; the exact requested tag and resolved digest are recorded in
+  `.work/re/images.lock.json`, whose `runtime` block embeds the selected runtime,
+  context/distribution, endpoint, client/server versions, server OS, Compose
+  version, the SHA-256 of `.work/re/runtime.json`, and both the runtime-selection
+  and image-lock timestamps.
+
+## Vulnerability triage
+
+`tools/re/summarize_trivy.py` produces a sanitized JSON and Markdown triage of
+every CRITICAL and HIGH finding from the offline Trivy scan (the full JSON is
+preserved under ignored `.work/re/output`). The acceptance gate
+(`--gate`) fails when any CRITICAL finding has a vendor-provided fixed version
+available; unfixed CRITICAL findings are documented individually, and HIGH
+findings are aggregated by package and remediation status. The triage records
+advisory ID, severity, package/ecosystem, installed/fixed version, fixed or
+unfixed status, dependency path / source layer when available, presence in the
+final runtime image, package purpose, and an exposure note for the hardened
+execution model. It never claims that runtime hardening eliminates an underlying
+vulnerability.
 
 ## Host boundary
 

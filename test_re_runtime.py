@@ -7,7 +7,9 @@ the full runtime matrix is covered deterministically on any host.
 
 from __future__ import annotations
 
+import json
 import os
+
 import pytest
 
 from tools.re import re_runtime as rt
@@ -38,7 +40,7 @@ DESKTOP_INFO_WINDOWS = "Client:\nServer:\n OSType: windows\n Server Version: 29.
 DESKTOP_STATUS_RUNNING = '{"SessionID":"s","Status":"running"}'
 DESKTOP_STATUS_STOPPED = '{"SessionID":"s","Status":"stopped"}'
 DESKTOP_CONTEXT_SHOW = "desktop-linux"
-DESKTOP_CONTEXT_LS = "desktop-linux *   Docker Desktop   npipe:////./pipe/dockerDesktopLinuxEngine"
+DESKTOP_CONTEXT_ENDPOINT = "npipe:////./pipe/dockerDesktopLinuxEngine"
 WSL_LIST = "  NAME      STATE       VERSION\n* Ubuntu    Running     2\n  docker-desktop  Stopped    2\n"
 WSL_LIST_DEBIAN_V1 = "  NAME      STATE       VERSION\n* Debian    Running     1\n"
 WSL_LIST_UBUNTU_ONLY = "  NAME      STATE       VERSION\n* Ubuntu    Running     2\n"
@@ -91,16 +93,23 @@ def clock(monkeypatch):
     return state
 
 
-def desktop_handlers(info: Proc = ok(DESKTOP_INFO), status: Proc = ok(DESKTOP_STATUS_RUNNING)):
+def desktop_handlers(
+    info: Proc = ok(DESKTOP_INFO),
+    status: Proc = ok(DESKTOP_STATUS_RUNNING),
+    context_names: Proc = ok("default\ndesktop-linux\n"),
+    context_inspect: Proc = ok(DESKTOP_CONTEXT_ENDPOINT),
+):
     # Needles are anchored to docker.exe so they never cross-match the WSL
-    # docker argv (which contains bare "docker --version"/"docker info").
+    # docker argv (which contains bare "docker --version"/"docker info"). The
+    # Desktop probe requires positive identity and a Desktop-owned Linux context.
     return {
         "docker.exe --version": ok(DESKTOP_VERSION),
         "docker.exe desktop status --format json": status,
+        "docker.exe context ls --format": context_names,
         "docker.exe context show": ok(DESKTOP_CONTEXT_SHOW),
-        "docker.exe context ls": ok(DESKTOP_CONTEXT_LS),
-        "docker.exe info": info,
-        "docker.exe compose version": ok(COMPOSE_VERSION),
+        "docker.exe context inspect desktop-linux --format": context_inspect,
+        "docker.exe --context desktop-linux info": info,
+        "docker.exe --context desktop-linux compose version": ok(COMPOSE_VERSION),
     }
 
 
@@ -163,11 +172,15 @@ def test_select_both_healthy_prefers_desktop_active_context(which):
     assert "active Docker Desktop Linux context preferred" in sel["selection_reason"]
 
 
-def test_select_both_healthy_prefers_wsl_without_desktop_context(which):
+def test_select_both_healthy_prefers_wsl_without_active_desktop_context(which):
+    # Desktop is healthy with a Desktop-owned context (desktop-linux) that is NOT
+    # the active global context (custom); both candidates healthy, so Auto
+    # prefers the native WSL Engine because no active Desktop context is present.
     which({"docker": True, "wsl": True})
     handlers = dict(desktop_handlers())
+    handlers["docker.exe context ls --format"] = ok("custom\ndesktop-linux\n")
     handlers["docker.exe context show"] = ok("custom")
-    handlers["docker.exe context ls"] = ok("custom  custom  npipe:////./pipe/custom")
+    handlers["docker.exe context inspect custom --format"] = ok("npipe:////./pipe/custom")
     handlers.update(wsl_handlers())
     sel = select(run=make_runner(handlers))
     assert sel["selected_runtime"] == "WslEngine"
@@ -257,7 +270,7 @@ def test_desktop_server_unavailable(which):
 def test_desktop_compose_missing(which):
     which({"docker": True, "wsl": True})
     handlers = dict(desktop_handlers())
-    handlers["docker.exe compose version"] = fail(1, "plugin not installed")
+    handlers["docker.exe --context desktop-linux compose version"] = fail(1, "plugin not installed")
     handlers.update(wsl_handlers(version=fail(1)))
     sel = select(run=make_runner(handlers))
     assert sel["probes"]["DockerDesktop"]["healthy"] is False
@@ -310,8 +323,13 @@ def test_runtime_metadata_recorded(which):
     assert meta["server_version"] == "29.6.2"
     assert meta["server_os"] == "linux"
     assert meta["compose_version"] == COMPOSE_VERSION
+    assert meta["context"] == "desktop-linux"
+    assert meta["endpoint"] == DESKTOP_CONTEXT_ENDPOINT
+    assert meta["docker_desktop"]["context"] == "desktop-linux"
+    assert meta["docker_desktop"]["endpoint"] == DESKTOP_CONTEXT_ENDPOINT
     assert meta["docker_desktop"]["active_context"] == "desktop-linux"
-    assert "endpoint" in meta["docker_desktop"]
+    assert meta["docker_desktop"]["context_is_active"] is True
+    assert meta["docker_desktop"]["desktop_identity"] == "desktop-status"
     assert meta["wsl"]["distribution"] == "Ubuntu"
     assert meta["wsl"]["version"] == 2
     assert "distributions" in meta["wsl"]
@@ -326,7 +344,15 @@ def wsl_selection():
 
 
 def desktop_selection():
-    return {"selected_runtime": "DockerDesktop", "wsl_distribution": "Ubuntu"}
+    return {
+        "selected_runtime": "DockerDesktop",
+        "wsl_distribution": "Ubuntu",
+        "metadata": {
+            "context": "desktop-linux",
+            "endpoint": DESKTOP_CONTEXT_ENDPOINT,
+            "docker_desktop": {"context": "desktop-linux", "endpoint": DESKTOP_CONTEXT_ENDPOINT},
+        },
+    }
 
 
 def wslpath_runner(converted):
@@ -340,10 +366,11 @@ def wslpath_runner(converted):
     return runner
 
 
-def test_adapter_desktop_argv():
+def test_adapter_desktop_argv_injects_recorded_context():
     adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner({}), wsl_exe="C:\\fake\\wsl.exe")
-    assert adapter.docker(["--version"]) == ["docker", "--version"]
-    assert adapter.compose(["version"]) == ["docker", "compose", "version"]
+    assert adapter.recorded_context == "desktop-linux"
+    assert adapter.docker(["--version"]) == ["docker", "--context", "desktop-linux", "--version"]
+    assert adapter.compose(["version"]) == ["docker", "--context", "desktop-linux", "compose", "version"]
     assert adapter.to_wsl_path(REPO) == REPO  # Desktop never converts paths
 
 
@@ -403,7 +430,7 @@ def test_adapter_bash_wsl_quotes_args():
 
 
 def test_adapter_preserves_exit_codes():
-    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner({"docker info": fail(7, "boom")}), wsl_exe="C:\\fake\\wsl.exe")
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner({"docker --context desktop-linux info": fail(7, "boom")}), wsl_exe="C:\\fake\\wsl.exe")
     result = adapter.run(adapter.docker(["info"]))
     assert result.returncode == 7
     assert result.stderr == "boom"
@@ -427,14 +454,19 @@ def test_runtime_json_roundtrip_preserves_selection(tmp_path):
         "selected_runtime": "DockerDesktop",
         "selection_reason": "explicit DockerDesktop selection is healthy",
         "probes": {},
-        "metadata": {"os_type": "windows"},
+        "metadata": {
+            "os_type": "windows",
+            "context": "desktop-linux",
+            "endpoint": DESKTOP_CONTEXT_ENDPOINT,
+            "docker_desktop": {"context": "desktop-linux", "endpoint": DESKTOP_CONTEXT_ENDPOINT},
+        },
     }
     path = os.path.join(str(tmp_path), "runtime.json")
     assert rt.write_runtime_json(selection, path) == os.path.abspath(path)
     restored = rt.read_runtime_json(path)
     adapter = rt.Adapter(restored, REPO, run=make_runner({}), wsl_exe="C:\\fake\\wsl.exe")
     assert adapter.runtime == "DockerDesktop"
-    assert adapter.docker(["ps"]) == ["docker", "ps"]
+    assert adapter.docker(["ps"]) == ["docker", "--context", "desktop-linux", "ps"]
 
 
 def test_parse_helpers():
@@ -489,6 +521,300 @@ def test_missing_linux_beagle_api_does_not_block_selection(which):
     assert sel["selected_runtime"] == "DockerDesktop"
 
 
+# --------------------------------------------------------------------------- hardening: Desktop identity + context pinning
+
+
+def test_desktop_status_unsupported_custom_context_rejected(which):
+    # No supported desktop status and no installed Desktop evidence: a custom or
+    # remote Windows context must NOT be accepted as Docker Desktop.
+    which({"docker": True, "wsl": True})
+    handlers = dict(desktop_handlers(status=fail(1, "unsupported")))
+    handlers["docker.exe desktop --help"] = fail(1)
+    handlers["sc query com.docker.service"] = fail(1)
+    handlers.update(wsl_handlers())
+    sel = select(requested="DockerDesktop", run=make_runner(handlers))
+    assert sel["selected_runtime"] is None
+    assert sel["probes"]["DockerDesktop"]["reason"] == "desktop_identity_unsupported"
+
+
+def test_desktop_status_unsupported_with_installed_evidence_and_desktop_context_accepted(which):
+    # Older Desktop: status unsupported, but installed Desktop evidence plus a
+    # Desktop-owned Linux context is accepted.
+    which({"docker": True, "wsl": True})
+    handlers = dict(desktop_handlers(status=fail(1, "unsupported")))
+    handlers["docker.exe desktop --help"] = ok("usage: docker desktop")
+    handlers["sc query com.docker.service"] = ok("SERVICE_NAME: com.docker.service")
+    handlers.update(wsl_handlers(version=fail(1)))
+    sel = select(run=make_runner(handlers))
+    assert sel["selected_runtime"] == "DockerDesktop"
+    dd = sel["probes"]["DockerDesktop"]["details"]
+    assert dd["desktop_identity"] == "installed-evidence"
+    assert dd["context"] == "desktop-linux"
+    assert dd["endpoint"] == DESKTOP_CONTEXT_ENDPOINT
+
+
+def test_explicit_desktop_with_custom_context_fails(which):
+    # Explicit DockerDesktop with only a custom/remote Linux context must fail.
+    which({"docker": True, "wsl": True})
+    handlers = dict(desktop_handlers())
+    handlers["docker.exe context ls --format"] = ok("custom\n")
+    handlers["docker.exe context show"] = ok("custom")
+    handlers["docker.exe context inspect custom --format"] = ok("npipe:////./pipe/custom")
+    handlers.update(wsl_handlers())
+    sel = select(requested="DockerDesktop", run=make_runner(handlers))
+    assert sel["selected_runtime"] is None
+    assert sel["probes"]["DockerDesktop"]["reason"] == "no_desktop_linux_context"
+
+
+def test_global_context_changed_after_selection_uses_recorded_context():
+    # The adapter is built from the recorded selection and always uses the
+    # recorded context; a later global context change cannot redirect it. The
+    # empty mock runner raises if any other context were used.
+    selection = desktop_selection()
+    adapter = rt.Adapter(selection, REPO, run=make_runner({}), wsl_exe="C:\\fake\\wsl.exe")
+    assert adapter.docker(["info"]) == ["docker", "--context", "desktop-linux", "info"]
+    assert adapter.compose(["ps"]) == ["docker", "--context", "desktop-linux", "compose", "ps"]
+    assert adapter.docker(["image", "inspect", "x"]) == ["docker", "--context", "desktop-linux", "image", "inspect", "x"]
+
+
+def test_recorded_context_removed_fails_closed():
+    handlers = {
+        "docker --context desktop-linux context inspect desktop-linux --format": fail(1, "context not found"),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.verify_context()
+    assert result.returncode != 0
+    assert "missing" in result.stderr
+
+
+def test_recorded_context_endpoint_changed_fails_closed():
+    handlers = {
+        "docker --context desktop-linux context inspect desktop-linux --format": ok("npipe:////./pipe/something-else"),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.verify_context()
+    assert result.returncode != 0
+    assert "endpoint changed" in result.stderr
+
+
+def test_recorded_context_windows_mode_fails_closed():
+    handlers = {
+        "docker --context desktop-linux context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+        "docker --context desktop-linux info": ok(DESKTOP_INFO_WINDOWS),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.verify_context()
+    assert result.returncode != 0
+    assert "not Linux" in result.stderr
+
+
+def test_every_operation_includes_selected_context():
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner({}), wsl_exe="C:\\fake\\wsl.exe")
+    ops = [
+        adapter.docker(["pull", "x"]),
+        adapter.docker(["build", "-t", "x", "."]),
+        adapter.docker(["image", "inspect", "x"]),
+        adapter.docker(["image", "tag", "a", "b"]),
+        adapter.docker(["save", "-o", "x.tar", "x"]),
+        adapter.docker(["compose", "version"]),
+        adapter.compose(["run", "--rm", "runner"]),
+    ]
+    for argv in ops:
+        assert argv[0] == "docker"
+        assert argv[1:3] == ["--context", "desktop-linux"], argv
+
+
+def test_image_lock_uses_adapter(tmp_path):
+    import json as _json
+    import tools.re.write_image_lock as wil
+
+    env = tmp_path / ".env.re"
+    env.write_text("RADARE2_IMAGE=radare/radare2:6.1.8\nRE_RUNNER_IMAGE=agentkvm2usb/re-runner:1\n", encoding="utf-8")
+    rt_json = tmp_path / "runtime.json"
+    rt.write_runtime_json(desktop_selection(), str(rt_json))
+    inspected = _json.dumps(
+        [{"RepoDigests": ["radare/radare2@sha256:abc"], "Id": "sha256:id",
+          "Created": "t", "Architecture": "amd64", "Os": "linux"}]
+    )
+    adapter = rt.Adapter(
+        desktop_selection(), str(tmp_path),
+        run=make_runner({"docker --context desktop-linux image inspect": ok(inspected)}),
+        wsl_exe="C:\\fake\\wsl.exe",
+    )
+    lock = wil.write_image_lock(
+        env_file=env, locked_env=tmp_path / ".env.re.lock", output=tmp_path / "lock.json",
+        repo_root=str(tmp_path), runtime_json=str(rt_json), adapter=adapter,
+    )
+    assert lock["runtime"]["selected_runtime"] == "DockerDesktop"
+    assert lock["runtime"]["context"] == "desktop-linux"
+    assert lock["runtime"]["runtime_json_sha256"]
+    assert lock["runtime"]["image_lock_generated_utc"]
+    assert lock["images"][0]["immutable_reference"] == "radare/radare2@sha256:abc"
+    locked = (tmp_path / ".env.re.lock").read_text(encoding="utf-8")
+    assert "RADARE2_IMAGE=radare/radare2@sha256:abc" in locked
+
+
+# --------------------------------------------------------------------------- hardening: selected-runtime provenance
+
+
+def test_wsl_selected_metadata_has_no_desktop_leak(which):
+    # Desktop client is present and identity-confirmed but its daemon is down;
+    # WSL Engine is selected. The top-level metadata must carry only WSL values.
+    which({"docker": True, "wsl": True})
+    handlers = dict(desktop_handlers(info=fail(1, "cannot connect")))
+    handlers.update(wsl_handlers())
+    sel = select(run=make_runner(handlers))
+    assert sel["selected_runtime"] == "WslEngine"
+    meta = sel["metadata"]
+    assert meta["client_version"] == WSL_DOCKER_VERSION
+    assert meta["server_version"] == "27.0.0"
+    assert meta["server_os"] == "linux"
+    assert meta["compose_version"] == COMPOSE_VERSION
+    assert meta["context"] is None
+    assert meta["endpoint"] is None
+    # The unhealthy Desktop client's values stay inside the labeled candidate
+    # sub-object and never leak into the selected top-level metadata.
+    assert meta["docker_desktop"]["client_version"] == DESKTOP_VERSION
+
+
+def test_runtime_json_hash_in_provenance(tmp_path):
+    import tools.re.write_image_lock as wil
+
+    rt_json = tmp_path / "runtime.json"
+    rt.write_runtime_json(desktop_selection(), str(rt_json))
+    prov = wil.build_runtime_provenance(desktop_selection(), str(rt_json))
+    assert prov["runtime_json_sha256"] == wil.sha256_of_file(str(rt_json))
+    assert prov["selected_runtime"] == "DockerDesktop"
+    assert prov["context"] == "desktop-linux"
+    assert prov["endpoint"] == DESKTOP_CONTEXT_ENDPOINT
+
+
+# --------------------------------------------------------------------------- hardening: mutable inputs + build locks
+
+
+def test_unused_angr_image_not_pulled():
+    root = os.path.dirname(__file__)
+    # The unused angr/angr image is never pulled (the compose angr service uses
+    # the project runner, which pins angr in its Python requirements).
+    bootstrap = open(os.path.join(root, "tools", "re", "bootstrap-re-containers.ps1"), encoding="utf-8").read()
+    assert "angr/angr:latest" not in bootstrap
+    assert "pullImages" in bootstrap
+    sh = open(os.path.join(root, "tools", "re", "bootstrap-re-containers.sh"), encoding="utf-8").read()
+    assert "angr/angr" not in sh
+    compose = open(os.path.join(root, "compose.re.yml"), encoding="utf-8").read()
+    assert "image: ${ANGR_IMAGE:-agentkvm2usb/re-runner:1}" in compose
+    env = open(os.path.join(root, ".env.re.example"), encoding="utf-8").read()
+    assert "SYFT_IMAGE=anchore/syft:v" in env
+    assert "TRIVY_IMAGE=aquasec/trivy:0." in env
+
+
+def test_base_image_digest_recorded(tmp_path):
+    import json as _json
+    import tools.re.resolve_base_image as rbi
+
+    inspected = _json.dumps(
+        [{"RepoDigests": ["python@sha256:abcdef"], "Id": "sha256:id", "Architecture": "amd64", "Os": "linux"}]
+    )
+    adapter = rt.Adapter(
+        desktop_selection(), str(tmp_path),
+        run=make_runner({"docker --context desktop-linux image inspect": ok(inspected)}),
+        wsl_exe="C:\\fake\\wsl.exe",
+    )
+    out = tmp_path / "base-image.lock.json"
+    rec = rbi.resolve_base_image(adapter=adapter, image="python:3.12-slim-bookworm", output=out)
+    assert rec["resolved_digest"] == "python@sha256:abcdef"
+    assert rec["source_repository"] == "python"
+    assert rec["requested_tag"] == "python:3.12-slim-bookworm"
+    assert rec["architecture"] == "amd64"
+    assert rec["retrieved_utc"]
+    assert out.exists()
+
+
+def test_python_hash_lock_enforced():
+    root = os.path.dirname(__file__)
+    lock = open(os.path.join(root, "containers", "re-runner", "requirements.lock.txt"), encoding="utf-8").read()
+    assert "--hash=sha256" in lock
+    assert "angr==" in lock
+    dockerfile = open(os.path.join(root, "containers", "re-runner", "Dockerfile"), encoding="utf-8").read()
+    assert "--require-hashes" in dockerfile
+    assert "FROM ${PYTHON_BASE_IMAGE}" in dockerfile
+    assert "requirements.lock.txt" in dockerfile
+    inp = open(os.path.join(root, "containers", "re-runner", "requirements.in"), encoding="utf-8").read()
+    assert "angr==" in inp
+
+
+# --------------------------------------------------------------------------- hardening: Trivy triage
+
+
+TRIVY_SAMPLE = {
+    "Results": [
+        {"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+            {"VulnerabilityID": "CVE-2023-1", "Severity": "CRITICAL", "PkgName": "zlib1g",
+             "InstalledVersion": "1.2.13-1", "FixedVersion": "", "Layer": {"DiffID": "sha256:layer1"}},
+            {"VulnerabilityID": "CVE-2023-2", "Severity": "HIGH", "PkgName": "openssl",
+             "InstalledVersion": "3.0", "FixedVersion": "3.0.1", "Layer": {"DiffID": "sha256:layer2"}},
+        ]},
+        {"Class": "lang-pkgs", "Type": "python", "Vulnerabilities": [
+            {"VulnerabilityID": "CVE-2024-1", "Severity": "CRITICAL", "PkgName": "angr",
+             "InstalledVersion": "9.3.1", "FixedVersion": "9.3.2", "Paths": ["/usr/local/lib/angr"]},
+        ]},
+    ]
+}
+
+
+def test_trivy_summary_classifies_critical_and_high():
+    import tools.re.summarize_trivy as st
+    s = st.summarize(TRIVY_SAMPLE)
+    assert s["summary"]["criticals_total"] == 2
+    assert s["summary"]["highs_total"] == 1
+    assert s["summary"]["criticals_fixable"] == 1
+    assert s["summary"]["criticals_unfixed"] == 1
+    crits = {r["id"]: r for r in s["criticals"]}
+    assert crits["CVE-2023-1"]["fixed_status"] == "unfixed"
+    assert crits["CVE-2023-1"]["ecosystem"] == "debian"
+    assert crits["CVE-2023-1"]["source_layer"] == "sha256:layer1"
+    assert crits["CVE-2024-1"]["fixed_status"] == "fixed"
+    assert crits["CVE-2024-1"]["dependency_path"] == ["/usr/local/lib/angr"]
+    assert "angr" in crits["CVE-2024-1"]["purpose"].lower()
+    assert crits["CVE-2023-1"]["present_in_final_runtime_image"] is True
+
+
+def test_trivy_fixable_vs_unfixed_critical():
+    import tools.re.summarize_trivy as st
+    s = st.summarize(TRIVY_SAMPLE)
+    # angr has a fixed version -> fixable -> gate fails.
+    assert s["gate"]["zero_fixable_criticals"] is False
+    assert s["gate"]["fixable_critical_ids"] == ["CVE-2024-1"]
+
+
+def test_trivy_zero_fixable_critical_gate(tmp_path):
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-1", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.0", "FixedVersion": ""}
+    ]}]}
+    s = st.summarize(sample)
+    assert s["gate"]["zero_fixable_criticals"] is True
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate"])
+    assert rc == 0
+
+
+def test_trivy_gate_fails_on_fixable_critical(tmp_path):
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "lang-pkgs", "Type": "python", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-2", "Severity": "CRITICAL", "PkgName": "angr",
+         "InstalledVersion": "9.3.1", "FixedVersion": "9.3.2"}
+    ]}]}
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate"])
+    assert rc == 1
+
+
 # --------------------------------------------------------------------------- compose hardening
 
 
@@ -508,3 +834,5 @@ def test_compose_no_docker_socket_and_hardening():
     assert "image: ${ANGR_IMAGE:-agentkvm2usb/re-runner:1}" in text
     # syft/trivy use host-backed writable dirs, not the 512 MiB default tmpfs.
     assert "entrypoint: [\"/syft\"]" in text
+    # runner build locks the Python base through a resolved immutable digest.
+    assert "PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim-bookworm}" in text
