@@ -26,7 +26,7 @@ analysis databases stay under ignored `.work/` directories.
 | Capability | Source | Deployment decision |
 | --- | --- | --- |
 | Radare2, r2ghidra, r2dec | `radare/radare2` publisher image | Pull the published versioned image and lock its digest. |
-| angr symbolic/static analysis | `angr/angr` project image | Pull the maintained project image and lock its digest. |
+| angr symbolic/static analysis | Project runner image | The `angr/angr` publisher image is a bare dev base without angr installed, so angr is pinned in the runner's Python requirements and runs from `agentkvm2usb/re-runner`. |
 | Ghidra headless/PyGhidra | NSA Ghidra release Dockerfile | Build the unmodified upstream Dockerfile from the official release ZIP after SHA-256 verification. A community image is opt-in only. |
 | Binwalk v3 | ReFirmLabs upstream Dockerfile | Build the unmodified upstream Dockerfile from the pinned release tag. |
 | USB trace decoding | Wireshark/TShark | Included in the small project runner because Wireshark does not publish a suitable stateless CLI image for this workflow. |
@@ -40,12 +40,40 @@ The only project-authored image is `agentkvm2usb/re-runner`. It contains the glu
 for TShark, ARM utilities, Python trace parsers, and the mounted Total Phase API.
 It does not contain vendor downloads or captured evidence.
 
+## Docker runtime selection
+
+Every toolchain entrypoint (`bootstrap`, `verify`, `run`, `scan`, `uninstall`)
+accepts `-ContainerRuntime Auto|DockerDesktop|WslEngine` (default `Auto`) and
+`-NoStartDockerDesktop`. A shared runtime adapter
+(`tools/re/runtime.psm1` + `tools/re/re_runtime.py`) probes both candidates,
+applies the issue #14 selection rules, records the decision in
+`.work/re/runtime.json`, and routes every Docker/Compose operation through the
+selected transport. The same selection is used across bootstrap, verification,
+Compose, image builds, image locking, SBOM, Trivy, Beagle, run wrappers, and
+uninstall — a runtime never switches silently mid-run.
+
+- Docker Desktop mode runs the Windows `docker`/`docker compose` CLI from the
+  Windows repository path and never performs Windows-to-WSL path conversion.
+- WSL Engine mode runs Docker inside the selected WSL2 distribution through
+  `wsl.exe --cd <wsl path> --exec docker`, so the repository path is converted
+  once with a discrete `wslpath -a` argument and never re-parsed by a shell.
+- `Auto` selects a single healthy runtime; when both are healthy it prefers the
+  active healthy Docker Desktop Linux context, otherwise the native WSL Engine.
+  An explicit selection wins and fails clearly when that candidate is
+  unavailable. If neither is healthy a structured diagnostic is emitted and
+  nothing is installed.
+- A Docker Desktop that is installed but stopped may be started through
+  `docker desktop start` with bounded polling unless `-NoStartDockerDesktop` is
+  passed. Docker Desktop and Docker Engine are never installed automatically.
+
 ## Host boundary
 
 The following remain on the Windows/WSL host because containers cannot replace
 them:
 
-- The existing WSL2 Docker Engine and Compose plugin.
+- A usable Docker runtime: the Windows Docker Desktop Linux engine or a native
+  WSL2 Docker Engine with the Compose plugin. Neither is installed by the
+  toolchain.
 - `usbipd-win`, only when the Beagle must be attached to WSL. Installation and
   removal use WinGet.
 - Wireshark/USBPcap, only for capturing the Windows official Epiphan KvmApp's
@@ -90,6 +118,13 @@ From the repository root:
 .\tools\re\bootstrap-re-containers.cmd -RefreshVendorInventory
 ```
 
+Runtime selection is explicit when needed:
+
+```powershell
+.\tools\re\bootstrap-re-containers.cmd -ContainerRuntime DockerDesktop
+.\tools\re\bootstrap-re-containers.cmd -ContainerRuntime WslEngine -WslDistribution Ubuntu
+```
+
 Install only the host USB plumbing needed for Beagle access:
 
 ```powershell
@@ -105,17 +140,27 @@ Add Windows USBPcap/Wireshark only for the official-app differential capture:
   -InstallWindowsCapture
 ```
 
-The bootstrap deliberately does not install Docker Desktop. It requires and
-uses the existing Docker Engine in the `Ubuntu` WSL distribution.
+The bootstrap deliberately does not install Docker Desktop or a WSL Docker
+Engine. It probes and uses an available runtime (see "Docker runtime selection"
+above), and an already-installed Docker Desktop may be started with bounded
+polling unless `-NoStartDockerDesktop` is passed. In Docker Desktop mode the
+pinned Ghidra/Binwalk upstream images are built by
+`tools/re/build-upstream-images.ps1` through the Windows Docker CLI; in WSL
+Engine mode the WSL-native `bootstrap-re-containers.sh` pipeline is used.
 
 ## Verification
 
 ```powershell
-pwsh -NoProfile -File .\tools\re\verify-re-containers.ps1
+pwsh -NoProfile -File .\tools\re\verify-re-containers.ps1 -ContainerRuntime Auto
+pwsh -NoProfile -File .\tools\re\verify-re-containers.ps1 -ContainerRuntime DockerDesktop
+pwsh -NoProfile -File .\tools\re\verify-re-containers.ps1 -ContainerRuntime WslEngine -WslDistribution Ubuntu
 ```
 
 Verification checks Docker/Compose, validates the Compose model, runs each
 analysis tool in a disposable container, and confirms the Total Phase inventory.
+The missing Linux Beagle API blocks only containerized live capture; the Windows
+host shim (`scripts/capture_beagle_usb12.py --api-dir <windows api dir>`) emits
+the same JSONL evidence for container analysis.
 
 ## Examples
 
@@ -162,8 +207,11 @@ Beagle capture wrapper:
 Image SBOM and vulnerability scan without exposing the Docker daemon socket to a container:
 
 ```powershell
-wsl -d Ubuntu -- bash -lc 'cd /mnt/c/Users/Mark/Projects/AgentKVM2USB && tools/re/scan-re-image.sh agentkvm2usb/re-runner:1'
+pwsh -File .\tools\re\scan-re-image.ps1 agentkvm2usb/re-runner:1 -ContainerRuntime Auto
 ```
+
+The PowerShell route uses the same runtime adapter as the rest of the toolchain;
+`tools/re/scan-re-image.sh` remains available for direct WSL-native use.
 
 ## Lifecycle
 
