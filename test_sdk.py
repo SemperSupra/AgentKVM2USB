@@ -1,4 +1,5 @@
 import pytest
+import datetime
 import os
 import time
 import cv2
@@ -22,6 +23,7 @@ from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 from hardware_probe import effective_signal, frame_stats, parse_dshow_options
 from trace_replay import TraceReplay
+from scripts.capture_mi00_experiment import default_experiment_id, write_metadata
 
 class TestEpiphanKVM_Enhanced:
     """
@@ -620,6 +622,62 @@ class TestEpiphanKVM_Enhanced:
         }
         assert replay.device_status() == {"resolution": "1920x1080"}
         assert [entry["event"] for entry in replay.iter_jsonl()] == ["open", "close"]
+
+    def test_trace_replay_summarizes_flat_mi00_descriptor_shape(self, tmp_path):
+        (tmp_path / "descriptors.json").write_text(
+            json.dumps(
+                {
+                    "vid": 0x2B77,
+                    "pid": 0x3661,
+                    "manufacturer": "Epiphan Systems Inc.",
+                    "product": "KVM2USB 3.0",
+                    "interfaces": [{"interface": 0}, {"interface": 1}, {"interface": 2}, {"interface": 3}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert TraceReplay(tmp_path).descriptor_summary() == {
+            "vid": "2b77",
+            "pid": "3661",
+            "manufacturer": "Epiphan Systems Inc.",
+            "product": "KVM2USB 3.0",
+            "interface_count": 4,
+        }
+
+    def test_trace_replay_reads_mi00_status(self, tmp_path):
+        (tmp_path / "mi00-status.json").write_text(
+            json.dumps({"available": True, "requests": {"input_status": {"parsed": {"width": 1920}}}}),
+            encoding="utf-8",
+        )
+
+        assert TraceReplay(tmp_path).mi00_status()["requests"]["input_status"]["parsed"]["width"] == 1920
+
+    def test_mi00_experiment_metadata_writer(self, tmp_path):
+        metadata_path = tmp_path / "metadata.yaml"
+        write_metadata(
+            metadata_path,
+            {
+                "experiment": {
+                    "id": "mi00-readonly-test",
+                    "objective": "unit test",
+                    "operator": "tester",
+                    "date": "2026-08-03",
+                    "git_commit": "abc123",
+                    "outputs": ["device-status.json"],
+                    "output_hashes": {"device-status.json": "deadbeef"},
+                    "result": "captured",
+                }
+            },
+        )
+
+        text = metadata_path.read_text(encoding="utf-8")
+        assert "id: \"mi00-readonly-test\"" in text
+        assert "device-status.json: deadbeef" in text
+
+    def test_mi00_experiment_default_id_is_stable(self):
+        now = datetime.datetime(2026, 8, 3, 4, 5, 6, tzinfo=datetime.timezone.utc)
+        assert default_experiment_id(now) == "mi00-readonly-20260803T040506Z"
 
     def test_parse_epiphan_text_edid_and_checksum(self):
         base = bytearray(128)

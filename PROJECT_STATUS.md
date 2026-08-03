@@ -69,6 +69,7 @@ Observed:
 - `epiphan_config.py` and `scripts/inspect_epiphan_config.py` expose the recovered MI_00 request map and read-only payload parsers as machine-consumable JSON, while keeping write/update requests metadata-only.
 - `EpiphanKVM_SDK.get_config_status()` exposes the approved live read-only MI_00 requests as failure-as-data JSON, including all three recovered user-mode slots through request `0xB3` with `wValue` values `0`, `1`, and `2`. The GUI exposes this through Tools -> Read Config Status as a single on-demand query.
 - `trace_replay.py` and `scripts/summarize_trace.py` provide a deterministic no-hardware replay foundation for descriptor/status/host-log experiment directories.
+- `scripts/capture_mi00_experiment.py` captures read-only MI_00 experiment directories with `metadata.yaml`, `descriptors.json`, `device-status.json`, `mi00-status.json`, and `host-log.jsonl`. A live smoke capture under ignored `.work\experiments\mi00-readonly-smoke` summarized correctly with VID `2b77`, PID `3661`, product `KVM2USB 3.0`, HID status `1920x1080 active`, and MI_00 `RGB 1920x1080p` status.
 - The official `kvm2usb3.img` has 6 valid FX3 records, 61 transfer chunks, entry `0x4002a114`, checksum `0x19fc6591`, and SHA256 `97c1e45f1af12ff7187275547e690b3105abe21c0f6187b9e99e5cd674fb3f3a`.
 - The official `kvm2usb3-sandbox.img` has 5 valid FX3 records, 51 transfer chunks, entry `0x400207a4`, checksum `0x2f1dea7f`, and SHA256 `f744a812c62208812392d9f085bbfe6f3184a3871c339e21487d6ab2e246e07d`.
 - The official FPGA payload `kvm2usb3.bin` has SHA256 `0b917e5ba03ff745c5bb7d09aceec29d255bb72e7027a0fd65c49334e5533d8b` and a Xilinx-style sync word `55 99 aa 66` at offset `0x10`. Packet-level FPGA bitstream decoding remains open.
@@ -151,6 +152,8 @@ Validated locally:
 - `.venv\Scripts\python.exe hardware_probe.py`
 - `.venv\Scripts\python.exe hardware_probe.py --include-dshow-options --measure-sec 3`
 - `.venv\Scripts\python.exe hardware_probe.py --wait-sec 1 --include-mi00 --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
+- `.venv\Scripts\python.exe scripts\capture_mi00_experiment.py --experiment-id mi00-readonly-smoke --operator codex --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
+- `.venv\Scripts\python.exe scripts\summarize_trace.py .work\experiments\mi00-readonly-smoke --pretty`
 - `.venv\Scripts\python.exe -c "from epiphan_sdk import EpiphanKVM_SDK; ..."` read-only live status check, including firmware version `4.0.0.39896`
 - release script dry-run and release upload path
 - portable dependency installer in an extracted path containing spaces

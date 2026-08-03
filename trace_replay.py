@@ -26,6 +26,14 @@ class TraceReplay:
 
     def descriptor_summary(self) -> dict:
         descriptors = self.read_json("descriptors.json")
+        if "vid" in descriptors or "pid" in descriptors:
+            return {
+                "vid": _hex_string(descriptors.get("vid")),
+                "pid": _hex_string(descriptors.get("pid")),
+                "manufacturer": descriptors.get("manufacturer"),
+                "product": descriptors.get("product"),
+                "interface_count": len(descriptors.get("interfaces", [])),
+            }
         device = descriptors.get("device", {})
         interfaces = []
         for configuration in descriptors.get("configurations", []):
@@ -40,3 +48,14 @@ class TraceReplay:
 
     def device_status(self) -> dict:
         return self.read_json("device-status.json")
+
+    def mi00_status(self) -> dict:
+        return self.read_json("mi00-status.json")
+
+
+def _hex_string(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return f"{int(value):04x}"

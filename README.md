@@ -90,6 +90,8 @@ sdk.close()
   config-payload parser.
 - `scripts/probe_mi00_config.py`: Guarded live read-only MI_00 WinUSB/libusb
   probe for input status, user modes, and device flags.
+- `scripts/capture_mi00_experiment.py`: Captures a deterministic read-only
+  MI_00 experiment directory for replay and USBPcap correlation.
 - `scripts/summarize_trace.py`: Summarizes deterministic experiment trace
   directories for no-hardware replay.
 
@@ -127,6 +129,12 @@ official WinUSB INF is bound:
 
 ```bash
 python hardware_probe.py --include-mi00 --libusb-dll path\to\libusb-1.0.dll
+```
+
+To capture a replayable read-only MI_00 experiment under `.work/experiments/`:
+
+```bash
+python scripts/capture_mi00_experiment.py --libusb-dll path\to\libusb-1.0.dll
 ```
 
 ## Contributing

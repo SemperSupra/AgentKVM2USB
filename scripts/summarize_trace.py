@@ -24,6 +24,7 @@ def main() -> int:
         "experiment_dir": str(args.experiment_dir),
         "descriptors": replay.descriptor_summary() if (args.experiment_dir / "descriptors.json").exists() else None,
         "device_status": replay.device_status() if (args.experiment_dir / "device-status.json").exists() else None,
+        "mi00_status": replay.mi00_status() if (args.experiment_dir / "mi00-status.json").exists() else None,
         "host_event_count": len(host_events),
         "host_event_types": sorted({event.get("event") or event.get("type") for event in host_events if event.get("event") or event.get("type")}),
     }
