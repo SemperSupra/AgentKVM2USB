@@ -99,7 +99,13 @@ class TestEpiphanKVM_Enhanced:
         SCROLL -1
         """
 
-        sdk.run_macro(macro_script)
+        result = sdk.run_macro(macro_script)
+
+        assert result["success"] is True
+        assert result["errors"] == []
+        assert [entry["command"] for entry in result["executed"]] == [
+            "DELAY", "TYPE", "PRESS", "HOTKEY", "CLICK", "MOVE", "SCROLL"
+        ]
 
         assert spy_delay.called
         delay_calls = [call[0][0] for call in spy_delay.call_args_list]
@@ -126,8 +132,12 @@ class TestEpiphanKVM_Enhanced:
         assert spy_scroll.call_args_list[0][0] == (-1,)
 
         # Test error handling (should not crash)
-        sdk.run_macro("INVALID_CMD")
-        sdk.run_macro("CLICK 0.5") # Missing Y
+        invalid_result = sdk.run_macro("INVALID_CMD")
+        click_error = sdk.run_macro("CLICK 0.5") # Missing Y
+        assert invalid_result["success"] is False
+        assert invalid_result["errors"][0]["message"] == "Unknown command 'INVALID_CMD'"
+        assert click_error["success"] is False
+        assert click_error["errors"][0]["message"] == "CLICK requires at least x_percent and y_percent"
 
     def test_documented_macro_keys_are_mapped(self):
         """Ensures MACROS.md key names are supported by the SDK key map."""

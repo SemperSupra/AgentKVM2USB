@@ -20,7 +20,17 @@ PRESS down
 PRESS enter
 """
 
-sdk.run_macro(macro_script)
+result = sdk.run_macro(macro_script)
+```
+
+`run_macro()` returns structured execution details:
+
+```python
+{
+    "success": True,
+    "executed": [{"line": 3, "command": "PRESS", "args": {"key": "f12"}}],
+    "errors": []
+}
 ```
 
 ## Available Commands

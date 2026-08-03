@@ -437,6 +437,7 @@ class EpiphanKVM_SDK:
         - MOVE <dx> <dy> [wheel]: Performs relative mouse movement.
         - SCROLL <wheel>: Performs relative mouse wheel movement.
         """
+        result = {"success": True, "executed": [], "errors": []}
         lines = macro_script.strip().splitlines()
         for line_num, line in enumerate(lines, 1):
             line = line.strip()
@@ -451,13 +452,18 @@ class EpiphanKVM_SDK:
                 if cmd == "DELAY":
                     ms = int(args.strip())
                     time.sleep(ms / 1000.0)
+                    result["executed"].append({"line": line_num, "command": cmd, "args": {"ms": ms}})
                 elif cmd == "TYPE":
                     self.type(args)
+                    result["executed"].append({"line": line_num, "command": cmd, "args": {"text": args}})
                 elif cmd == "PRESS":
-                    self.press(args.strip())
+                    key = args.strip()
+                    self.press(key)
+                    result["executed"].append({"line": line_num, "command": cmd, "args": {"key": key}})
                 elif cmd == "HOTKEY":
                     keys = [k.strip() for k in args.split()]
                     self.hotkey(*keys)
+                    result["executed"].append({"line": line_num, "command": cmd, "args": {"keys": keys}})
                 elif cmd == "CLICK":
                     click_args = [arg.strip() for arg in args.split()]
                     if len(click_args) >= 2:
@@ -465,8 +471,13 @@ class EpiphanKVM_SDK:
                         y = float(click_args[1])
                         button = int(click_args[2]) if len(click_args) > 2 else 1
                         self.click(x, y, button)
+                        result["executed"].append({
+                            "line": line_num,
+                            "command": cmd,
+                            "args": {"x": x, "y": y, "button": button},
+                        })
                     else:
-                        print(f"[SDK] Macro Error at line {line_num}: CLICK requires at least x_percent and y_percent")
+                        self._macro_error(result, line_num, line, "CLICK requires at least x_percent and y_percent")
                 elif cmd == "MOVE":
                     move_args = [arg.strip() for arg in args.split()]
                     if len(move_args) >= 2:
@@ -474,14 +485,28 @@ class EpiphanKVM_SDK:
                         dy = int(move_args[1])
                         wheel = int(move_args[2]) if len(move_args) > 2 else 0
                         self.move_mouse_relative(dx, dy, wheel)
+                        result["executed"].append({
+                            "line": line_num,
+                            "command": cmd,
+                            "args": {"dx": dx, "dy": dy, "wheel": wheel},
+                        })
                     else:
-                        print(f"[SDK] Macro Error at line {line_num}: MOVE requires dx and dy")
+                        self._macro_error(result, line_num, line, "MOVE requires dx and dy")
                 elif cmd == "SCROLL":
-                    self.scroll_mouse(int(args.strip()))
+                    wheel = int(args.strip())
+                    self.scroll_mouse(wheel)
+                    result["executed"].append({"line": line_num, "command": cmd, "args": {"wheel": wheel}})
                 else:
-                    print(f"[SDK] Macro Error at line {line_num}: Unknown command '{cmd}'")
+                    self._macro_error(result, line_num, line, f"Unknown command '{cmd}'")
             except Exception as e:
-                print(f"[SDK] Macro Error at line {line_num}: Exception executing '{line}': {e}")
+                self._macro_error(result, line_num, line, f"Exception executing command: {e}")
+        return result
+
+    def _macro_error(self, result, line_num, line, message):
+        result["success"] = False
+        error = {"line": line_num, "text": line, "message": message}
+        result["errors"].append(error)
+        print(f"[SDK] Macro Error at line {line_num}: {message}")
 
     def get_screen(self, prefix="capture", overlay=True):
         path = self._runtime_path(self._generate_filename(prefix, "jpg"))
