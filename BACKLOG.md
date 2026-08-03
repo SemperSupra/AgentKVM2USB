@@ -36,7 +36,7 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 ## Agent-Ready Feature Pipeline
 - [x] **Named Macro Library:** Add a persistent gallery for saved DSL scripts with SDK save/list/get/delete/run APIs, dry-run validation, `AGENTKVM2USB_PROFILE_ROOT`, and GUI Macro Editor controls.
 - [ ] **Vision-Conditional Macros:** Extend DSL with `WAIT_FOR_MOTION`, `WAIT_FOR_SIGNAL`, or `IF_MOTION_STOP` for feedback-loop automation.
-- [ ] **Remote Control API (Headless Mode):** Implement a FastAPI or WebSocket bridge to allow remote AI agents to call `get_processed_frame` and `run_macro`.
+- [x] **Remote Control API (Headless Mode):** Add a dependency-free local JSON API for status, health, frame metadata/JPEG, macro listing, macro execution, named macro execution, and macro validation.
 - [ ] **OCR Integration:** Integrate `pytesseract` or `easyocr` to enable `WAIT_FOR_TEXT "Welcome"` and searchable screen content.
 - [ ] **Multi-KVM Dashboard:** Support a grid-view mode for users with 2-4 devices connected to a single host.
 

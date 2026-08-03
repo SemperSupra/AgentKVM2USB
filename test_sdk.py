@@ -23,6 +23,7 @@ from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 from hardware_probe import effective_signal, frame_stats, parse_dshow_options
 from trace_replay import TraceReplay
+from agent_api import api_response
 from scripts.capture_mi00_experiment import default_experiment_id, write_metadata
 
 class TestEpiphanKVM_Enhanced:
@@ -210,6 +211,48 @@ class TestEpiphanKVM_Enhanced:
             "executed": [],
             "errors": [{"line": 0, "text": "missing", "message": "Named macro not found"}],
         }
+
+    def test_headless_api_exposes_status_health_and_macros(self):
+        class FakeSdk:
+            def get_status(self):
+                return {"resolution": "1920x1080"}
+
+            def get_device_health(self, include_mi00=False):
+                return {"include_mi00": include_mi00}
+
+            def list_macros(self):
+                return ["Boot Menu"]
+
+            def get_processed_frame(self):
+                return None
+
+            def run_macro(self, script, dry_run=False):
+                return {"script": script, "dry_run": dry_run}
+
+            def run_named_macro(self, name, dry_run=False):
+                return {"name": name, "dry_run": dry_run}
+
+            def validate_macro(self, script):
+                return {"validated": script}
+
+        sdk = FakeSdk()
+
+        assert api_response("GET", "/status", b"", sdk) == (200, {"resolution": "1920x1080"})
+        assert api_response("GET", "/health?include_mi00=1", b"", sdk) == (200, {"include_mi00": True})
+        assert api_response("GET", "/macros", b"", sdk) == (200, {"macros": ["Boot Menu"]})
+        assert api_response("GET", "/frame", b"", sdk) == (200, {"available": False, "shape": None})
+        assert api_response("POST", "/macro", b'{"script":"PRESS enter","dry_run":true}', sdk) == (
+            200,
+            {"script": "PRESS enter", "dry_run": True},
+        )
+        assert api_response("POST", "/named-macro", b'{"name":"Boot Menu"}', sdk) == (
+            200,
+            {"name": "Boot Menu", "dry_run": False},
+        )
+        assert api_response("POST", "/macro/validate", b'{"script":"PRESS enter"}', sdk) == (
+            200,
+            {"validated": "PRESS enter"},
+        )
 
     def test_documented_macro_keys_are_mapped(self):
         """Ensures MACROS.md key names are supported by the SDK key map."""

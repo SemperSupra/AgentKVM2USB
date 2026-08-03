@@ -54,6 +54,9 @@ sdk.delete_macro("Boot Menu")
 In the GUI, open Options -> Settings -> Macro Editor to load, save, delete,
 validate, or run named macros.
 
+The same macro operations are available through the local JSON API started by
+`scripts/run_headless_api.py`.
+
 ## Available Commands
 
 The DSL supports the following commands. Commands are case-insensitive; convention is to use uppercase. Blank lines and lines beginning with `#` are ignored.

@@ -150,6 +150,24 @@ Named macros are stored in the user profile. Override that location with:
 set AGENTKVM2USB_PROFILE_ROOT=C:\KVM-Lab\Profile
 ```
 
+## Headless JSON API
+
+Run a local agent API without GUI:
+
+```bash
+python scripts/run_headless_api.py --host 127.0.0.1 --port 8765
+```
+
+Endpoints:
+
+- `GET /status`
+- `GET /health?include_mi00=1`
+- `GET /frame?include_image=1`
+- `GET /macros`
+- `POST /macro` with `{"script":"PRESS enter","dry_run":true}`
+- `POST /named-macro` with `{"name":"Boot Menu","dry_run":true}`
+- `POST /macro/validate` with `{"script":"PRESS enter"}`
+
 ## Contributing
 Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.
 

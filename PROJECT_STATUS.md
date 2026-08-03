@@ -124,6 +124,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
 - Named macro storage is implemented with SDK save/list/get/delete/run helpers, dry-run validation through `validate_macro()`, and GUI Macro Editor load/save/delete/validate controls. Macro profile storage defaults outside the repository and can be redirected with `AGENTKVM2USB_PROFILE_ROOT`.
+- `scripts/run_headless_api.py` exposes a local dependency-free JSON API for `/status`, `/health`, `/frame`, `/macros`, `/macro`, `/named-macro`, and `/macro/validate`.
 - `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar. It can include MI_00 results only when explicitly called with `include_mi00=True`.
 - Effective-signal reasons now distinguish `hid_mi00_and_frame`, `hid_and_mi00`, `mi00_and_frame`, and `mi00_report` when MI_00 diagnostics are explicitly included.
 - SDK configuration helpers parse/build recovered MI_00 payloads, and the opt-in live config path sends only the approved vendor IN read requests.
@@ -160,6 +161,7 @@ Validated locally:
 - `.venv\Scripts\python.exe scripts\capture_mi00_experiment.py --experiment-id mi00-readonly-smoke --operator codex --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
 - `.venv\Scripts\python.exe scripts\summarize_trace.py .work\experiments\mi00-readonly-smoke --pretty`
 - `.venv\Scripts\python.exe hardware_probe.py --wait-sec 0 --runtime-root .work\runtime-smoke`
+- `.venv\Scripts\python.exe scripts\run_headless_api.py --help`
 - `.venv\Scripts\python.exe -c "from epiphan_sdk import EpiphanKVM_SDK; ..."` read-only live status check, including firmware version `4.0.0.39896`
 - release script dry-run and release upload path
 - portable dependency installer in an extracted path containing spaces
