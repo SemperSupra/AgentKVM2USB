@@ -12,6 +12,11 @@ import string
 import re
 from pathlib import Path
 from frame_processor import MotionDetector, OverlayManager, SRTGenerator
+from hid_discovery import (
+    EPIPHAN_KVM2USB3_PROFILE,
+    DiscoveryDiagnostic,
+    discover_hid_devices,
+)
 
 VERSION = "0.2.0"
 RUNTIME_SESSION_ROOT = "runtime_sessions"
@@ -57,13 +62,26 @@ class EpiphanKVM_SDK:
         }
     }
 
-    def __init__(self, target_name="KVM2USB 3.0"):
+    def __init__(
+        self,
+        target_name="KVM2USB 3.0",
+        *,
+        hid_serial=None,
+        hid_path=None,
+        development_mode=False,
+    ):
         self.vid = 0x2b77
         self.pid = 0x3661
         self.kb_dev = None
         self.mouse_dev = None
         self.touch_dev = None
         self.sys_dev = None
+        self.hid_serial = hid_serial
+        self.hid_path = hid_path
+        self.development_mode = development_mode
+        self.hid_discovery = None
+        self.hid_diagnostics = []
+        self.hid_connection_ready = False
         self.cap = None
         self.latest_frame = None
         self.current_camera_name = None
@@ -239,15 +257,53 @@ class EpiphanKVM_SDK:
     # --- CORE HARDWARE LOGIC ---
 
     def _connect_hid(self):
-        for d in hid.enumerate(self.vid, self.pid):
-            usage = d.get('usage', 0)
+        entries = hid.enumerate()
+        self.hid_discovery = discover_hid_devices(
+            entries,
+            profiles=(EPIPHAN_KVM2USB3_PROFILE,),
+            serial=self.hid_serial,
+            stable_path=self.hid_path,
+            development_mode=self.development_mode,
+        )
+        self.hid_discovery.connection_ready = False
+        self.hid_diagnostics = list(self.hid_discovery.diagnostics)
+        selected = self.hid_discovery.selected
+        if selected is None or not self.hid_discovery.topology_valid:
+            return
+
+        handles = {
+            "keyboard": "kb_dev",
+            "relative_mouse": "mouse_dev",
+            "absolute_pointer": "touch_dev",
+            "system": "sys_dev",
+        }
+        opened = []
+        for role, record in selected.collections.items():
             try:
-                dev = hid.device(); dev.open_path(d['path'])
-                if usage == 0x101: self.kb_dev = dev
-                elif usage == 0x102: self.mouse_dev = dev
-                elif usage == 0x103: self.touch_dev = dev
-                elif usage == 0x104: self.sys_dev = dev
-            except: pass
+                dev = hid.device()
+                dev.open_path(record.path)
+            except Exception as exc:
+                self.hid_diagnostics.append(DiscoveryDiagnostic(
+                    "inaccessible_collection",
+                    f"HID collection {role} could not be opened: {exc}",
+                    device_id=selected.device_id,
+                    role=role,
+                    path=record.path_text,
+                ))
+                for opened_dev in opened:
+                    try:
+                        opened_dev.close()
+                    except Exception:
+                        pass
+                for handle_name in handles.values():
+                    setattr(self, handle_name, None)
+                return
+            setattr(self, handles[role], dev)
+            opened.append(dev)
+
+        required_handles = (self.kb_dev, self.mouse_dev, self.touch_dev, self.sys_dev)
+        self.hid_connection_ready = all(handle is not None for handle in required_handles)
+        self.hid_discovery.connection_ready = self.hid_connection_ready
 
     def _auto_start_video(self, target_name):
         cameras = self.list_available_cameras()
