@@ -22,6 +22,10 @@ class HidCollectionProfile:
     usage_page: int
     usage: int
     interface_number: int | None = None
+    report_id: int | None = None
+    report_length: int | None = None
+    report_id_prefix: bool | None = None
+    rollover_limit: int | None = None
 
     def matches(self, record: "HidInterfaceRecord") -> bool:
         return (
@@ -195,7 +199,7 @@ EPIPHAN_KVM2USB3_PROFILE = DeviceProfile(
     profile_id="epiphan-kvm2usb3",
     identities=(UsbIdentity(0x2B77, 0x3661),),
     collections=(
-        HidCollectionProfile("keyboard", 0xFF00, 0x0101, 3),
+        HidCollectionProfile("keyboard", 0xFF00, 0x0101, 3, 1, 8, True, 6),
         HidCollectionProfile("relative_mouse", 0xFF00, 0x0102, 3),
         HidCollectionProfile("absolute_pointer", 0xFF00, 0x0103, 3),
         HidCollectionProfile("system", 0xFF00, 0x0104, 3),
