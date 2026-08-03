@@ -33,6 +33,27 @@ result = sdk.run_macro(macro_script)
 }
 ```
 
+Use `validate_macro()` to parse a macro without sending HID events:
+
+```python
+result = sdk.validate_macro(macro_script)
+```
+
+## Named Macro Library
+
+Named macros are stored in the user profile outside the repository by default.
+The profile root can be overridden with `AGENTKVM2USB_PROFILE_ROOT`.
+
+```python
+sdk.save_macro("Boot Menu", "PRESS f12")
+sdk.run_named_macro("Boot Menu")
+sdk.run_named_macro("Boot Menu", dry_run=True)
+sdk.delete_macro("Boot Menu")
+```
+
+In the GUI, open Options -> Settings -> Macro Editor to load, save, delete,
+validate, or run named macros.
+
 ## Available Commands
 
 The DSL supports the following commands. Commands are case-insensitive; convention is to use uppercase. Blank lines and lines beginning with `#` are ignored.

@@ -153,6 +153,64 @@ class TestEpiphanKVM_Enhanced:
         assert click_error["success"] is False
         assert click_error["errors"][0]["message"] == "CLICK requires at least x_percent and y_percent"
 
+    def test_macro_dry_run_validates_without_executing(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.type = mocker.Mock()
+        sdk.press = mocker.Mock()
+        sdk.hotkey = mocker.Mock()
+        sdk.click = mocker.Mock()
+        sdk.move_mouse_relative = mocker.Mock()
+        sdk.scroll_mouse = mocker.Mock()
+
+        result = sdk.validate_macro("PRESS enter\nHOTKEY ctrl alt delete\nMOVE 1 2\nSCROLL -1")
+
+        assert result["success"] is True
+        assert [entry["command"] for entry in result["executed"]] == ["PRESS", "HOTKEY", "MOVE", "SCROLL"]
+        sdk.press.assert_not_called()
+        sdk.hotkey.assert_not_called()
+        sdk.move_mouse_relative.assert_not_called()
+        sdk.scroll_mouse.assert_not_called()
+
+    def test_macro_validation_rejects_unknown_keys(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+
+        result = sdk.validate_macro("PRESS nope\nHOTKEY ctrl nope")
+
+        assert result["success"] is False
+        assert result["errors"] == [
+            {"line": 1, "text": "PRESS nope", "message": "Unknown key 'nope'"},
+            {"line": 2, "text": "HOTKEY ctrl nope", "message": "Unknown key/modifier 'nope'"},
+        ]
+
+    def test_named_macro_library_persists_to_profile_root(self, tmp_path):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.profile_root = tmp_path
+        sdk.macro_library_path = tmp_path / "macros.json"
+        sdk._load_macro_library()
+
+        assert sdk.save_macro("Boot Menu", "PRESS f12") is True
+        assert sdk.list_macros() == ["Boot Menu"]
+        assert sdk.get_macro("Boot Menu") == "PRESS f12"
+
+        reloaded = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        reloaded.profile_root = tmp_path
+        reloaded.macro_library_path = tmp_path / "macros.json"
+        reloaded._load_macro_library()
+
+        assert reloaded.get_macro("Boot Menu") == "PRESS f12"
+        assert reloaded.delete_macro("Boot Menu") is True
+        assert reloaded.list_macros() == []
+
+    def test_run_named_macro_reports_missing_name(self):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.macro_library = {}
+
+        assert sdk.run_named_macro("missing") == {
+            "success": False,
+            "executed": [],
+            "errors": [{"line": 0, "text": "missing", "message": "Named macro not found"}],
+        }
+
     def test_documented_macro_keys_are_mapped(self):
         """Ensures MACROS.md key names are supported by the SDK key map."""
         expected = {

@@ -144,6 +144,12 @@ set AGENTKVM2USB_SESSION_ROOT=C:\KVM-Lab\Sessions
 python hardware_probe.py --runtime-root C:\KVM-Lab\Sessions
 ```
 
+Named macros are stored in the user profile. Override that location with:
+
+```bash
+set AGENTKVM2USB_PROFILE_ROOT=C:\KVM-Lab\Profile
+```
+
 ## Contributing
 Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.
 

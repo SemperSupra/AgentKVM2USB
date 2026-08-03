@@ -68,7 +68,7 @@ class EpiphanKVM_SDK:
         }
     }
 
-    def __init__(self, target_name="KVM2USB 3.0", runtime_root=None):
+    def __init__(self, target_name="KVM2USB 3.0", runtime_root=None, profile_root=None):
         self.vid = 0x2b77
         self.pid = 0x3661
         self.kb_dev = None
@@ -85,6 +85,12 @@ class EpiphanKVM_SDK:
         self.last_action_expiry = 0
         self._lock = threading.Lock()
         self.runtime_root = Path(runtime_root or os.environ.get("AGENTKVM2USB_SESSION_ROOT") or RUNTIME_SESSION_ROOT)
+        self.profile_root = Path(
+            profile_root
+            or os.environ.get("AGENTKVM2USB_PROFILE_ROOT")
+            or self._default_profile_root()
+        )
+        self.macro_library_path = self.profile_root / "macros.json"
         
         self.session_started_at = datetime.datetime.now(datetime.timezone.utc)
         self.session_correlation_id = secrets.token_hex(4)
@@ -112,6 +118,7 @@ class EpiphanKVM_SDK:
         
         self._load_all_presets()
         self._load_config()
+        self._load_macro_library()
         self._connect_hid()
         self._auto_start_video(target_name)
 
@@ -131,6 +138,12 @@ class EpiphanKVM_SDK:
         path = self.runtime_root / f"{timestamp}-{self.session_correlation_id}"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @staticmethod
+    def _default_profile_root():
+        if platform.system() == "Windows" and os.environ.get("APPDATA"):
+            return Path(os.environ["APPDATA"]) / "AgentKVM2USB"
+        return Path.home() / ".agentkvm2usb"
 
     def save_config(self):
         """Saves current configuration to file."""
@@ -198,6 +211,62 @@ class EpiphanKVM_SDK:
                 return True
             except: return False
         return False
+
+    def _load_macro_library(self):
+        """Loads persistent named macro scripts from the user profile root."""
+        self.macro_library = {}
+        if os.path.exists(self.macro_library_path):
+            try:
+                with open(self.macro_library_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self.macro_library = {
+                        str(name): str(script)
+                        for name, script in data.items()
+                        if isinstance(name, str) and isinstance(script, str)
+                    }
+            except Exception:
+                self.macro_library = {}
+
+    def save_macro(self, name, script):
+        """Persists a named macro script in the user profile macro library."""
+        clean_name = str(name).strip()
+        if not clean_name:
+            return False
+        self.macro_library[clean_name] = str(script)
+        self.profile_root.mkdir(parents=True, exist_ok=True)
+        with open(self.macro_library_path, "w", encoding="utf-8") as f:
+            json.dump(self.macro_library, f, indent=2, sort_keys=True)
+        return True
+
+    def delete_macro(self, name):
+        clean_name = str(name).strip()
+        if clean_name not in self.macro_library:
+            return False
+        del self.macro_library[clean_name]
+        self.profile_root.mkdir(parents=True, exist_ok=True)
+        with open(self.macro_library_path, "w", encoding="utf-8") as f:
+            json.dump(self.macro_library, f, indent=2, sort_keys=True)
+        return True
+
+    def list_macros(self):
+        return sorted(self.macro_library.keys())
+
+    def get_macro(self, name):
+        return self.macro_library.get(str(name).strip())
+
+    def validate_macro(self, macro_script):
+        return self.run_macro(macro_script, dry_run=True)
+
+    def run_named_macro(self, name, dry_run=False):
+        script = self.get_macro(name)
+        if script is None:
+            return {
+                "success": False,
+                "executed": [],
+                "errors": [{"line": 0, "text": str(name), "message": "Named macro not found"}],
+            }
+        return self.run_macro(script, dry_run=dry_run)
 
     # --- FILENAME & LOGGING UTILITIES ---
 
@@ -426,7 +495,7 @@ class EpiphanKVM_SDK:
             elif a in self.KEY_MAP: keys.append(self.KEY_MAP[a])
         self._raw_kb(mods, keys); time.sleep(0.05); self._raw_kb(0, [0])
 
-    def run_macro(self, macro_script: str):
+    def run_macro(self, macro_script: str, dry_run=False):
         """
         Executes a sequence of commands defined in a Domain Specific Language (DSL).
         Available commands:
@@ -452,26 +521,38 @@ class EpiphanKVM_SDK:
             try:
                 if cmd == "DELAY":
                     ms = int(args.strip())
-                    time.sleep(ms / 1000.0)
+                    if not dry_run:
+                        time.sleep(ms / 1000.0)
                     result["executed"].append({"line": line_num, "command": cmd, "args": {"ms": ms}})
                 elif cmd == "TYPE":
-                    self.type(args)
+                    if not dry_run:
+                        self.type(args)
                     result["executed"].append({"line": line_num, "command": cmd, "args": {"text": args}})
                 elif cmd == "PRESS":
                     key = args.strip()
-                    self.press(key)
-                    result["executed"].append({"line": line_num, "command": cmd, "args": {"key": key}})
+                    if key.lower() not in self.KEY_MAP:
+                        self._macro_error(result, line_num, line, f"Unknown key '{key}'")
+                    elif not dry_run:
+                        self.press(key)
+                    if key.lower() in self.KEY_MAP:
+                        result["executed"].append({"line": line_num, "command": cmd, "args": {"key": key}})
                 elif cmd == "HOTKEY":
                     keys = [k.strip() for k in args.split()]
-                    self.hotkey(*keys)
-                    result["executed"].append({"line": line_num, "command": cmd, "args": {"keys": keys}})
+                    invalid = [k for k in keys if k.lower() not in self.MOD_MAP and k.lower() not in self.KEY_MAP]
+                    if invalid:
+                        self._macro_error(result, line_num, line, f"Unknown key/modifier '{invalid[0]}'")
+                    elif not dry_run:
+                        self.hotkey(*keys)
+                    if not invalid:
+                        result["executed"].append({"line": line_num, "command": cmd, "args": {"keys": keys}})
                 elif cmd == "CLICK":
                     click_args = [arg.strip() for arg in args.split()]
                     if len(click_args) >= 2:
                         x = float(click_args[0])
                         y = float(click_args[1])
                         button = int(click_args[2]) if len(click_args) > 2 else 1
-                        self.click(x, y, button)
+                        if not dry_run:
+                            self.click(x, y, button)
                         result["executed"].append({
                             "line": line_num,
                             "command": cmd,
@@ -485,7 +566,8 @@ class EpiphanKVM_SDK:
                         dx = int(move_args[0])
                         dy = int(move_args[1])
                         wheel = int(move_args[2]) if len(move_args) > 2 else 0
-                        self.move_mouse_relative(dx, dy, wheel)
+                        if not dry_run:
+                            self.move_mouse_relative(dx, dy, wheel)
                         result["executed"].append({
                             "line": line_num,
                             "command": cmd,
@@ -495,7 +577,8 @@ class EpiphanKVM_SDK:
                         self._macro_error(result, line_num, line, "MOVE requires dx and dy")
                 elif cmd == "SCROLL":
                     wheel = int(args.strip())
-                    self.scroll_mouse(wheel)
+                    if not dry_run:
+                        self.scroll_mouse(wheel)
                     result["executed"].append({"line": line_num, "command": cmd, "args": {"wheel": wheel}})
                 else:
                     self._macro_error(result, line_num, line, f"Unknown command '{cmd}'")

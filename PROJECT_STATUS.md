@@ -123,6 +123,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Feature writes for touch type and slave re-enumeration are recovered and unit-tested offline, but still require a safe target session before live validation.
 - Relative mouse movement, button, and wheel reports are recovered and unit-tested offline; live validation should happen only on a sacrificial target or safe firmware screen.
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
+- Named macro storage is implemented with SDK save/list/get/delete/run helpers, dry-run validation through `validate_macro()`, and GUI Macro Editor load/save/delete/validate controls. Macro profile storage defaults outside the repository and can be redirected with `AGENTKVM2USB_PROFILE_ROOT`.
 - `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar. It can include MI_00 results only when explicitly called with `include_mi00=True`.
 - Effective-signal reasons now distinguish `hid_mi00_and_frame`, `hid_and_mi00`, `mi00_and_frame`, and `mi00_report` when MI_00 diagnostics are explicitly included.
 - SDK configuration helpers parse/build recovered MI_00 payloads, and the opt-in live config path sends only the approved vendor IN read requests.
@@ -139,6 +140,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - Generated media, SRT files, and session JSON logs are ignored by Git.
 - Runtime outputs and per-run mutable state are grouped under `runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/`.
 - Runtime output root can now be overridden with `EpiphanKVM_SDK(runtime_root=...)`, environment variable `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
+- User profile root for named macros can be overridden with `AGENTKVM2USB_PROFILE_ROOT`.
 - Broad exception handling still exists in hardware-probing paths. Replace it gradually with narrow exceptions and structured diagnostics as hardware behavior is characterized.
 - The repository root `config.json` is treated as a packaged default seed. Per-run `config.json`, `user_presets.json`, logs, captures, recordings, and SRT files are written under the correlated runtime session directory.
 
