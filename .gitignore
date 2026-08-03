@@ -65,6 +65,7 @@ venv.bak/
 # Epiphan Specific
 Downloads/
 EpiphanTools/
+.work/
 *.fw
 *.zip
 *.bin
