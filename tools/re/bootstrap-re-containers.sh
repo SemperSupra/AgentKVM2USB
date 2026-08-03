@@ -19,9 +19,8 @@ docker compose version >/dev/null
 
 pull_images=(
   "radare/radare2:6.1.8"
-  "angr/angr:latest"
-  "anchore/syft:latest"
-  "aquasec/trivy:latest"
+  "anchore/syft:v1.19.0"
+  "aquasec/trivy:0.57.1"
 )
 for image in "${pull_images[@]}"; do
   docker pull "$image"
@@ -31,7 +30,7 @@ done
 mkdir -p .work/re/cache/trivy
 if ! docker run --rm \
   --mount type=bind,src="$repo_root/.work/re/cache/trivy",dst=/root/.cache/trivy \
-  aquasec/trivy:latest image --download-db-only; then
+  aquasec/trivy:0.57.1 image --download-db-only; then
   echo "WARNING: Trivy database prefetch failed; offline vulnerability scans will be unavailable until it succeeds." >&2
 fi
 

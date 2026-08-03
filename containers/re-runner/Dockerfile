@@ -1,4 +1,5 @@
-FROM python:3.12-slim-bookworm
+ARG PYTHON_BASE_IMAGE=python:3.12-slim-bookworm
+FROM ${PYTHON_BASE_IMAGE}
 
 LABEL org.opencontainers.image.title="AgentKVM2USB reverse-engineering runner" \
       org.opencontainers.image.description="Headless USB trace and ARM firmware analysis utilities" \
@@ -30,9 +31,13 @@ RUN set -eux; \
       yara; \
     rm -rf /var/lib/apt/lists/*
 
-COPY containers/re-runner/requirements.txt /tmp/requirements.txt
-RUN python3 -m pip install --no-cache-dir --requirement /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+# Python dependencies are hash-locked. requirements.in is the human-maintained
+# input; requirements.lock.txt is the generated pip-compile lock with
+# --require-hashes. The lock is platform-specific to the Linux Python 3.12 image.
+COPY containers/re-runner/requirements.in /tmp/requirements.in
+COPY containers/re-runner/requirements.lock.txt /tmp/requirements.lock.txt
+RUN python3 -m pip install --no-cache-dir --require-hashes --requirement /tmp/requirements.lock.txt \
+    && rm /tmp/requirements.in /tmp/requirements.lock.txt
 
 RUN useradd --create-home --uid 1000 --shell /bin/bash analyst \
     && mkdir -p /work/input /work/output /work/projects /work/vendor \
