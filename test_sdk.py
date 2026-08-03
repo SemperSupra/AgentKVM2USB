@@ -8,6 +8,7 @@ import re
 import threading
 from epiphan_firmware import parse_epiphan_text_edid, parse_fpga_bitstream, parse_fx3_image, summarize_edid
 from epiphan_config import parse_recovered_response, recovered_request_map
+from mi00_probe import Mi00ProbeError, read_config_request, read_only_request_by_name
 from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
@@ -326,7 +327,7 @@ class TestEpiphanKVM_Enhanced:
         payload[20:24] = (59940).to_bytes(4, "little")
         payload[24:26] = (1920).to_bytes(2, "little")
         payload[26:28] = (1080).to_bytes(2, "little")
-        payload[28] = 1
+        payload[28] = 0
 
         assert EpiphanKVM_SDK.parse_config_input_status(payload) == {
             "source": "DVI",
@@ -335,6 +336,7 @@ class TestEpiphanKVM_Enhanced:
             "height": 1080,
             "refresh_hz": 59.94,
             "scan_mode": "p",
+            "scan_flag_raw": 0,
             "is_signal_active": True,
             "label": "DVI 1920x1080p@59.94, VESA",
         }
@@ -358,6 +360,34 @@ class TestEpiphanKVM_Enhanced:
             "audio_selector_multichannel": True,
             "unknown_bits": 0,
         }
+
+    def test_mi00_probe_refuses_non_read_only_requests(self):
+        with pytest.raises(Mi00ProbeError):
+            read_only_request_by_name("write_device_flags")
+
+    def test_mi00_probe_uses_static_confirmed_read_only_transfer(self):
+        class FakeDevice:
+            def __init__(self):
+                self.calls = []
+
+            def ctrl_transfer(self, bm_request_type, request, w_value, w_index, length, timeout):
+                self.calls.append((bm_request_type, request, w_value, w_index, length, timeout))
+                return [0x16]
+
+        dev = FakeDevice()
+        result = read_config_request(dev, "device_flags", timeout_ms=250).as_dict()
+
+        assert dev.calls == [(0xC0, 0xE2, 0, 0, 1, 250)]
+        assert result["payloadHex"] == "16"
+        assert result["parsed"]["performance_mode"] is True
+
+    def test_mi00_probe_reports_transfer_failures_as_probe_errors(self):
+        class FailingDevice:
+            def ctrl_transfer(self, *args, **kwargs):
+                raise OSError("backend unavailable")
+
+        with pytest.raises(Mi00ProbeError, match="input_status"):
+            read_config_request(FailingDevice(), "input_status")
 
     def test_parse_and_build_config_flags(self):
         """Documents recovered MI_00 requests 0xE2/0xE3 device flag bits."""

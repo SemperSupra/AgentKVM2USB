@@ -802,7 +802,8 @@ class EpiphanKVM_SDK:
         refresh_hz = int.from_bytes(bytes(payload[20:24]), "little") / 1000.0
         width = int.from_bytes(bytes(payload[24:26]), "little")
         height = int.from_bytes(bytes(payload[26:28]), "little")
-        progressive = bool(payload[28])
+        scan_flag_raw = int(payload[28]) & 0xFF
+        progressive = scan_flag_raw == 0
         active = width > 0 and height > 0 and refresh_hz > 0
 
         return {
@@ -812,6 +813,7 @@ class EpiphanKVM_SDK:
             "height": height,
             "refresh_hz": refresh_hz,
             "scan_mode": "p" if progressive else "i",
+            "scan_flag_raw": scan_flag_raw,
             "is_signal_active": active,
             "label": f"{source or 'unknown'} {width}x{height}{'p' if progressive else 'i'}@{refresh_hz:g}, {mode_name}" if active else "no signal",
         }

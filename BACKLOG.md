@@ -3,7 +3,7 @@
 This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap) for implementation.
 
 ## Device Investigation Priorities
-- [ ] **Program Separation:** Keep PR `#6` scoped to packaging baseline work, then create the private evidence vault and private-first clean `OpenKVM2USB` repository described in `OPENKVM2USB_STRATEGY.md`.
+- [x] **Program Separation:** PR `#6` was restored to packaging baseline scope and merged. The private evidence vault and private-first clean `OpenKVM2USB` repository were created and seeded.
 - [ ] **Provenance Manifests:** Use `manifests/artifact.schema.yaml`, `manifests/experiment.schema.yaml`, and `manifests/environment.schema.yaml` for evidence-vault and reproducible-build records.
 - [x] **Live Mode HID Report:** Map the observed KVM2USB 3.0 live mode report. Usage `0x103`, feature report `3`, returns `width_le16`, `height_le16`, and an active flag. Verified with `1920x1080 active`.
 - [x] **Structured Hardware Probe v2:** Extend `hardware_probe.py` to emit HID collection metadata, status source, UVC ownership/open state, frame statistics, and effective signal inference in one JSON document.
@@ -12,7 +12,8 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [x] **Trace Replay Foundation:** Add deterministic experiment-directory replay helpers for descriptors, device status, and host JSONL logs.
 - [x] **HID Report Map:** Recover KVM2USB 3.0 keyboard, mouse, touch, live-size, touch-type, and re-enumerate report IDs/lengths from Linux vendor-app disassembly. SDK keyboard, relative mouse, and touch framing now follows the vendor report IDs with legacy fallbacks. Keep live write-path validation deferred until a human approves a hardware-safe target session.
 - [x] **Recovered Capability Matrix:** Document recovered app, driver, firmware, HID, and config-interface features in `RECOVERED_CAPABILITIES.md`.
-- [ ] **MI_00 Config Interface Probe:** After explicit approval for host driver changes, bind the official WinUSB config driver for `VID_2B77&PID_3661&MI_00` and build a read-only probe around interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`.
+- [x] **MI_00 Config Interface Probe:** Built and live-validated after user approval on 2026-08-03. The official Epiphan INF binds `VID_2B77&PID_3661&MI_00` to WinUSB, and `scripts/probe_mi00_config.py` performs guarded read-only PyUSB/libusb requests around interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`. Live-validated requests: vendor IN `0xB2` input status, `0xB3` user mode, and `0xE2` device flags only. Do not send `0x40` OUT requests, update requests, EDID writes, or flash writes.
+- [ ] **MI_00 Protocol Confirmation:** Capture official configuration-tool USBPcap traces for the now-live read paths, then compare request values, indexes, payloads, and parsed values against the clean probe.
 - [x] **Vendor Config Request Map:** Static disassembly confirms config requests `0xB2`, `0xB3`, `0xE2`, `0xE3`, and update/EDID requests including `0xA0`, `0xC4`, `0xC5`, and `0xD4`. `InputStatusInfo`, `UserMode`, and device flag payloads are mapped and exposed through offline parser/building helpers plus `scripts/inspect_epiphan_config.py`. Next step is USBPcap confirmation of read-only official-tool actions before implementing a live probe.
 - [x] **FX3 Firmware Container Parser:** Add offline Cypress FX3 `.img` parsing, checksum validation, entry address recovery, and request `0xA0` chunk planning. See `FIRMWARE_UPDATE_RECOVERY.md`.
 - [ ] **FPGA Bitstream Packet Decoder:** Decode `kvm2usb3.bin` after the Xilinx sync word at offset `0x10`, including packet headers, CRC command, and end/desync sequence.

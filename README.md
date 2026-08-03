@@ -88,6 +88,8 @@ sdk.close()
   FX3 `.img`, FPGA `.bin`, EDID text dumps, and package metadata.
 - `scripts/inspect_epiphan_config.py`: Offline recovered MI_00 request map and
   config-payload parser.
+- `scripts/probe_mi00_config.py`: Guarded live read-only MI_00 WinUSB/libusb
+  probe for input status, user modes, and device flags.
 - `scripts/summarize_trace.py`: Summarizes deterministic experiment trace
   directories for no-hardware replay.
 

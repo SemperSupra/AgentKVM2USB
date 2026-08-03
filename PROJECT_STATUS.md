@@ -1,6 +1,6 @@
 # AgentKVM2USB Project Status
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-08-03
 
 Program strategy update reviewed: 2026-08-03. Long-term open-stack work is now
 tracked in `OPENKVM2USB_STRATEGY.md`; public metadata schemas for artifacts,
@@ -9,10 +9,10 @@ experiments, environments, and vendor-document acquisition are under
 
 ## Repository Triage
 
-- Active branch: `package-foundry/public-deployment-readiness`.
+- Active branch: `recovery/agentkvm2usb-app-capabilities`.
 - Base branch: `main`.
-- Open issue: `#5`, Windows Package Foundry public deployment readiness.
-- Open pull request: `#6`, draft, targeting `main` from `package-foundry/public-deployment-readiness`.
+- Packaging PR `#6` was restored to packaging-only scope and merged.
+- Open pull request: draft PR `#7`, targeting `main` from `recovery/agentkvm2usb-app-capabilities`.
 - Stale remote branches observed after merged work: `origin/refactor/spartan-6-fx3-assumptions-8828302436159790485` and `origin/update-hardware-report-16011522587312263998`.
 - No GitHub Actions workflow exists in this repository.
 
@@ -58,6 +58,11 @@ Observed:
   inventory is tracked in `RECOVERED_CAPABILITIES.md`.
 - Official Epiphan firmware, KVM App/config tool, Linux AppImage, and legacy Windows driver packages were downloaded into `.work/epiphan-downloads/` with SHA256 provenance recorded in `.work/epiphan-downloads/manifest.json`.
 - Static vendor artifact findings are tracked in `VENDOR_ARTIFACTS.md`. The KVM App WinUSB INF binds `VID_2B77&PID_3661&MI_00` as `KVM2USB 3.0 Configuration` and registers interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`.
+- The official Epiphan INF was installed on 2026-08-03. MI_00 is now bound to `WINUSB` with manufacturer `Epiphan Ltd`, PnP class `USBDevice`, and error code `0`.
+- `scripts/probe_mi00_config.py` successfully performed read-only live MI_00 requests after WinUSB binding:
+  - `0xB2` input status: source `RGB`, mode `HDMI`, `1920x1080`, active, refresh around `60 Hz`, `scan_flag_raw=0`.
+  - `0xE2` device flags: raw `0xfe`; recovered aspect-ratio, performance, and multichannel-audio bits are set; high bits remain unmapped.
+  - `0xB3` user mode: `ff ff ff ff ff` disabled sentinel for tested `wValue`/`wIndex` values `0..2`.
 - The firmware `.fw` package contains a validated KVM2USB 3.0 EDID hex dump with manufacturer `EPH`, two valid EDID blocks, and base detailed timings for `1920x1080`, `1280x720`, and `1920x1200` near 60 Hz.
 - `epiphan_firmware.py` now parses Cypress FX3 `.img` firmware containers offline, validates the 32-bit data-word checksum, and produces the same `0x1000`-bounded address chunks used by the vendor updater's request `0xA0` write/read-verify path.
 - `scripts/inspect_epiphan_firmware.py` now emits offline JSON summaries for Epiphan `.fw` packages, including FX3 records/checksums, FPGA sync offset, package metadata, and firmware-packaged EDID summary/checksum state.
@@ -116,6 +121,10 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - `run_macro()` now returns structured execution/error results while preserving printed compatibility diagnostics.
 - `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar.
 - SDK configuration helpers are offline-only. They parse/build recovered MI_00 payloads but do not bind WinUSB or send raw USB control requests.
+- The live MI_00 probe is read-only by construction. It requires `--execute-read-only`, exposes only static-confirmed vendor IN requests, and has no code path for write/update requests.
+- User approval on 2026-08-03: start blocker 1, the read-only MI_00 config-interface probe. Guardrails: only vendor IN requests `0xB2`, `0xB3`, and `0xE2`; no OUT requests; no firmware/update/EDID writes; driver binding is a host-state change and must use the official INF only if needed.
+- User plan on 2026-08-03: another machine will be prepared for blocker 2, harmless HID injection validation.
+- User plan on 2026-08-03: the current KVM2USB can be used for blocker 3 firmware/FPGA recovery. Treat this as approval for documentation, inventory, read-only extraction, and safe probing only; persistent writes still require a specific hardware-safe test plan.
 - Firmware parser helpers are offline-only. They validate and plan image transfers but do not send update, repair, EDID, or flash commands.
 - Linux reverse engineering is valuable and has already recovered more functionality than the stripped Windows binaries. Mac software remains a secondary cross-check unless Linux and Windows disagree.
 - Macro coordinates are clamped to normalized `0.0` to `1.0` before HID touch reports are emitted.
@@ -161,7 +170,7 @@ Phase 2: Validate hardware behavior.
 - Continue refining `hardware_probe.py` as the machine-consumable pipeline baseline.
 - Confirm whether UVC/DirectShow formats, frame rates, and FOURCC values change across target resolutions, adapter chains, or USB host ports.
 - Validate recovered HID write reports on a safe target session; prefer `sdk.run_macro()` for action sequences.
-- After explicit driver approval, build a read-only MI_00 WinUSB/libusb probe for static-confirmed config requests.
+- Build and run a guarded read-only MI_00 WinUSB/libusb probe for static-confirmed config requests.
 - Exercise keyboard, mouse, touch, and hotkey HID paths on a sacrificial target session.
 - Measure frame latency, frame rate, and recording stability over 10-minute and 60-minute runs.
 

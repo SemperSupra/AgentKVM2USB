@@ -129,7 +129,7 @@ Recovered structures:
 | `InputStatusInfo` | `0x14` | refresh rate | 32-bit little-endian milli-Hz value displayed after division by `1000.0` |
 | `InputStatusInfo` | `0x18` | width | 16-bit little-endian; non-zero required for active signal |
 | `InputStatusInfo` | `0x1a` | height | 16-bit little-endian; non-zero required for active signal |
-| `InputStatusInfo` | `0x1c` | progressive flag | UI emits `p` when true and `i` when false |
+| `InputStatusInfo` | `0x1c` | scan flag | Live HDMI `1920x1080` status returns `0x00`; parser preserves this as `scan_flag_raw` and currently interprets `0` as progressive. Confirm against additional modes. |
 | `UserMode` | `0x00` | width | 16-bit little-endian; UI spinbox range `0..65535` |
 | `UserMode` | `0x02` | height | 16-bit little-endian; UI spinbox range `0..65535` |
 | `UserMode` | `0x04` | disabled flag | One byte; the UI has three checkable user-mode group boxes and stores `disabled = !checked` |
@@ -147,6 +147,20 @@ requests yet.
 `epiphan_config.py` and `scripts/inspect_epiphan_config.py` expose the recovered
 MI_00 request map and payload parser dispatch in machine-consumable form. Write
 and update requests are represented as metadata only.
+
+`mi00_probe.py` and `scripts/probe_mi00_config.py` add the guarded live-probe
+surface for blocker 1. The probe is read-only by construction: it exposes only
+static-confirmed vendor IN requests `0xB2`, `0xB3`, and `0xE2`, requires
+`--execute-read-only` before issuing a transfer, and has no implementation path
+for vendor OUT, firmware update, EDID write, or FPGA write requests.
+
+First live read-only MI_00 probe after official WinUSB INF binding:
+
+| Request | Payload | Parsed result |
+| --- | --- | --- |
+| `0xB2` input status | `52 47 42 00 00 00 00 00 00 00 00 00 48 44 4d 49 00 00 00 00 a4 ea 00 00 80 07 38 04 00` | `RGB`, mode `HDMI`, `1920x1080`, active, refresh approximately `60.068 Hz` |
+| `0xE2` device flags | `fe` | preserve aspect ratio, performance mode, and multichannel audio bits set; high bits still unmapped |
+| `0xB3` user mode | `ff ff ff ff ff` | disabled sentinel for tested `wValue`/`wIndex` values `0..2` |
 
 Recovered update transfer behavior:
 
