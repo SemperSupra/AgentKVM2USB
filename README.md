@@ -88,6 +88,8 @@ sdk.close()
   FX3 `.img`, FPGA `.bin`, EDID text dumps, and package metadata.
 - `scripts/inspect_epiphan_config.py`: Offline recovered MI_00 request map and
   config-payload parser.
+- `scripts/summarize_trace.py`: Summarizes deterministic experiment trace
+  directories for no-hardware replay.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:

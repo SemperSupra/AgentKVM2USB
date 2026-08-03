@@ -12,6 +12,7 @@ from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 from hardware_probe import effective_signal, frame_stats, parse_dshow_options
+from trace_replay import TraceReplay
 
 class TestEpiphanKVM_Enhanced:
     """
@@ -458,6 +459,36 @@ class TestEpiphanKVM_Enhanced:
         assert summary["checksum_valid"] is True
         assert summary["record_count"] == 1
         assert summary["records"] == [{"address": 0x40003000, "word_count": 1, "byte_count": 4}]
+
+    def test_trace_replay_summarizes_experiment_directory(self, tmp_path):
+        (tmp_path / "descriptors.json").write_text(
+            json.dumps(
+                {
+                    "device": {
+                        "vid": "2b77",
+                        "pid": "3661",
+                        "manufacturer": "Epiphan",
+                        "product": "KVM2USB 3.0",
+                    },
+                    "configurations": [{"interfaces": [{"number": 0}, {"number": 1}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / "device-status.json").write_text('{"resolution":"1920x1080"}', encoding="utf-8")
+        (tmp_path / "host-log.jsonl").write_text('{"event":"open"}\n{"event":"close"}\n', encoding="utf-8")
+
+        replay = TraceReplay(tmp_path)
+
+        assert replay.descriptor_summary() == {
+            "vid": "2b77",
+            "pid": "3661",
+            "manufacturer": "Epiphan",
+            "product": "KVM2USB 3.0",
+            "interface_count": 2,
+        }
+        assert replay.device_status() == {"resolution": "1920x1080"}
+        assert [entry["event"] for entry in replay.iter_jsonl()] == ["open", "close"]
 
     def test_parse_epiphan_text_edid_and_checksum(self):
         base = bytearray(128)
