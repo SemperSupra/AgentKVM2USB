@@ -1,57 +1,122 @@
-# AgentKVM2USB Handoff - Session: April 6, 2026
+# AgentKVM2USB Handoff
 
-## 🟢 Status & Completed Features
+Session date: 2026-08-02
 
-### 1. Vision & Frame Processing (Enhanced)
-- **Modular Engine**: `frame_processor.py` provides real-time video enhancements, motion detection, and HUD overlays.
-- **SRT Syncing**: Sidecar `.srt` files are generated during recordings to log motion events with sub-second accuracy.
-- **Toolbar Sensitivity**: Added a "⚡ Sens" quick-toggle to the main toolbar to cycle between Low, Med, and High motion sensitivity.
+## Current Repository State
 
-### 2. Device-Aware Persistence
-- **Per-Device Preset Memory**: The app now remembers which preset (e.g., "VGA Legacy") was last used for a specific hardware device (e.g., "KVM2USB 3.0") using `config.json`.
-- **Automatic Application**: Switching cameras now triggers an immediate, relevant preset load without user intervention.
+- Repository: `SemperSupra/AgentKVM2USB`
+- Active branch: `package-foundry/public-deployment-readiness`
+- Base branch: `main`
+- Open issue: `#5`
+- Open draft PR: `#6`
+- Latest pushed commits:
+  - `5a42e86ebd41253f8b848dec2e0b0dece649ebe9` - `Harden portable release packaging`
+  - `042a591a4fb7041d3cb62ee0746193b8d8274bf1` - `Improve hardware validation and UI testability`
 
-### 3. HID Automation & Macros
-- **Macro DSL**: Implemented `run_macro` in the SDK to execute Domain Specific Language (DSL) scripts (e.g., `DELAY 500 | TYPE hello | PRESS enter`).
-- **Macro Editor GUI**: A new tab in the Settings dialog allows users to write, test, and execute macros against the live hardware.
-- **Robust Performance Mode**: Refactored `set_performance_mode` to reliably switch between MJPG and YUY2 by restarting the capture stream, ensuring high frame rates on demand.
+## Release State
 
-### 4. Session & Log Management
-- **Cleanup Tool**: Added "Cleanup Old Session Data" to the File menu, allowing users to safely delete snapshots, logs, and recordings older than 7 days.
-- **Unified Logging**: Improved session event logging to include hardware-level re-enumeration and OSD status updates.
+Release `v0.2.0` has a Windows portable ZIP and matching SHA256 checksum attached.
 
-### 5. Validation
-- **`test_sdk.py`**: Expanded to 8 tests covering the new Macro DSL, Motion Detection logic, SRT generation, and Preset Persistence. All **PASS**.
-- **Mock Testing**: Verified per-device memory and cleanup logic using specialized mock scripts.
+Current release asset checksum:
 
----
+```text
+360ff91a7c4b76d90b5d115ceea379b4f8c8568e67c54c36f7c37a8ff413a3c1  AgentKVM2USB-v0.2.0-windows-portable.zip
+```
 
-## 🟡 Pending Work & Next Steps
+Release URL: https://github.com/SemperSupra/AgentKVM2USB/releases/tag/v0.2.0
 
-### 1. Vision-Conditional Macros (DSL Extension)
-- **Goal**: Make macros "aware" of the screen state.
-- **Tasks**:
-  - Extend DSL with `WAIT_FOR_MOTION`, `WAIT_FOR_SIGNAL`, and `WAIT_FOR_NO_MOTION`.
-  - Implement feedback-loop automation where a macro waits for a reboot to finish before typing a password.
+## Completed This Session
 
-### 2. Named Macro Library
-- **Goal**: Allow users to save their DSL scripts with names (e.g., "Reset to BIOS").
-- **Tasks**:
-  - Add a persistent gallery in the Macro Editor to store and recall common sequences.
+- Added local portable ZIP build and release scripts.
+- Added `.package-foundry/package.json`.
+- Uploaded release assets to `v0.2.0`.
+- Added `PROJECT_STATUS.md`.
+- Added `hardware_probe.py` for machine-consumable hardware diagnostics.
+- Moved mutable runtime outputs into `runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/`.
+- Treat root `config.json` as a default seed only.
+- Updated `.gitignore` so runtime sessions, generated captures, recordings, SRTs, and session logs do not show up in Git.
+- Fixed GUI menu construction.
+- Removed forced Fusion styling and emoji-heavy toolbar labels.
+- Added SDK and GUI regression tests.
 
-### 3. Remote Control API (Headless Mode)
-- **Goal**: Enable cloud-based AI agents to control the hardware.
-- **Tasks**:
-  - Implement a FastAPI or WebSocket wrapper to expose the SDK's core functions (frame capture and macro execution) over the network.
+## Current Validation
 
----
+Validated:
 
-## 🛠️ Environment Note
-- **Dependencies**: `pygrabber`, `PySide6`, `opencv-python`, `hidapi`.
-- **Files Created/Modified**:
-  - `epiphan_sdk.py` (Updated: Per-device logic, Macro DSL, Cleanup)
-  - `kvmapp_gui.py` (Updated: Toolbar, Cleanup menu, Camera naming)
-  - `settings_dialog.py` (Updated: Macro Editor tab, UI refinements)
-  - `test_sdk.py` (Updated: Enhanced test suite)
-  - `BACKLOG.md` (Updated: Agent-Ready feature pipeline)
-  - `config.json` (New: Persistent device mappings)
+- `python -m compileall -q .`
+- `.venv\Scripts\python.exe -m pytest -v`: 16 passed
+- `.venv\Scripts\python.exe -m pip check`: no broken requirements
+- `python -m json.tool .package-foundry\package.json`
+- `python scripts\build_portable.py`
+- `python scripts\release.py --tag v0.2.0`
+- Published release assets downloaded and checksum-verified.
+
+## Hardware Findings
+
+Two KVM2USB 3.0 units were tested against a powered-on Wyse 5070.
+
+Observed on both units:
+
+- USB/HID/UVC host link is good.
+- LED is blue, which Epiphan documents as normal for an active USB 3.0 host link.
+- HID keyboard, mouse, touch, and system endpoints open.
+- DirectShow sees `KVM2USB 3.0`.
+- OpenCV reads 1920x1080 YUY2 frames.
+- Captured frames are black.
+- `get_status()` reports `resolution: 0x0` and `is_signal_active: false`.
+
+Current connection path:
+
+```text
+Wyse DisplayPort
+-> DP to HDMI adapter
+-> HDMI cable
+-> HDMI to DVI adapter
+-> Epiphan KVM cable
+-> KVM2USB
+```
+
+Leading diagnosis: target video negotiation is failing through the adapter chain. The KVM2USB units themselves appear healthy.
+
+## Adapter Recommendation
+
+Avoid the DP-to-HDMI plus HDMI-to-DVI chain. Use one active DisplayPort-to-DVI conversion.
+
+Best physical fit:
+
+- StarTech `DP2DVIMM6BS`: active DP male to DVI-D male cable, 1080p/1920x1200 at 60 Hz. This should plug directly into the Epiphan KVM cable's female DVI end.
+
+Likely alternatives:
+
+- StarTech `DP2DVIS`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
+- Cable Matters `102022`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
+- Accell UltraAV `B087B-005B-2`: active DP to DVI-D single-link adapter. Confirm connector gender before buying.
+- Club 3D `CAC-1010`: active DP to dual-link DVI-D. More than needed for 1080p; confirm connector gender.
+
+Avoid:
+
+- StarTech `DP2DVI`, because it is passive.
+- Passive DP-to-DVI unless the Wyse DP port is known to support DP++.
+- DP-to-HDMI plus HDMI-to-DVI adapter chains.
+- USB display adapters.
+
+## Next Steps
+
+1. Reboot the host/working machine as needed.
+2. Acquire or locate an active DisplayPort-to-DVI-D adapter/cable.
+3. Connect the Wyse to the Epiphan KVM cable through a single active DP-to-DVI conversion.
+4. Boot the Wyse with video and target USB connected from power-on.
+5. Run:
+
+```powershell
+python hardware_probe.py --capture
+```
+
+6. If still black, try the other Wyse DisplayPort output and reboot again.
+7. If still black, use the official Epiphan Capture Config tool to inspect/set user modes/EDID.
+
+## Important Caveats
+
+- Do not commit files under `runtime_sessions/`.
+- Do not commit machine-specific runtime `config.json` files.
+- Firmware flashing, EDID writing, and raw USB control writes remain high-risk deferred work.

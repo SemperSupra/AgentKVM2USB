@@ -46,3 +46,6 @@ Please review `MACROS.md` for a full list of supported commands (`DELAY`, `TYPE`
 - Verify target signal status using `sdk.get_status()` prior to interaction.
 - For screen analysis, retrieve the latest frame with `sdk.get_screen()` and utilize vision or OCR capabilities.
 - Coordinate parameters for `sdk.click()` require normalized percentages (0.0 to 1.0) relative to screen resolution, rather than absolute pixel values.
+- Treat firmware flashing, EDID writes, and raw USB control transfers as high-risk deferred work unless a human explicitly authorizes a hardware-safe test plan.
+- Read `PROJECT_STATUS.md` before running hardware actions. It records current branch, release, hardware validation status, test coverage, and known gaps.
+- Keep generated screenshots, recordings, SRT files, and session logs out of commits.

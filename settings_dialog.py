@@ -128,18 +128,16 @@ class SettingsDialog(QDialog):
         help_text = QLabel("<b>HID Macro DSL Guide:</b><br>"
                           "DELAY 500 | TYPE hello | PRESS enter | HOTKEY ctrl alt delete | CLICK 0.5 0.5")
         help_text.setWordWrap(True)
-        help_text.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(help_text)
         
         self.macro_edit = QTextEdit()
         self.macro_edit.setPlaceholderText("# Enter macro script here...\nDELAY 500\nTYPE Admin123\nPRESS enter")
-        self.macro_edit.setFontFamily("Consolas")
+        self.macro_edit.setFontFamily("monospace")
         layout.addWidget(self.macro_edit)
         
         btn_layout = QHBoxLayout()
-        self.run_macro_btn = QPushButton("▶ Run Macro (Immediate)")
+        self.run_macro_btn = QPushButton("Run Macro (Immediate)")
         self.run_macro_btn.clicked.connect(self.run_macro_logic)
-        self.run_macro_btn.setStyleSheet("background-color: #dcfce7; color: #166534; font-weight: bold;")
         
         self.clear_macro_btn = QPushButton("Clear")
         self.clear_macro_btn.clicked.connect(self.macro_edit.clear)
@@ -156,7 +154,7 @@ class SettingsDialog(QDialog):
             return
         
         self.run_macro_btn.setEnabled(False)
-        self.run_macro_btn.setText("⏳ Executing...")
+        self.run_macro_btn.setText("Executing...")
         # We'll run it in a thread to avoid blocking UI during DELAYs
         import threading
         def _run():
@@ -164,7 +162,7 @@ class SettingsDialog(QDialog):
             # Re-enable on UI thread
             from PySide6.QtCore import QMetaObject, Q_ARG
             QMetaObject.invokeMethod(self.run_macro_btn, "setEnabled", Qt.QueuedConnection, Q_ARG(bool, True))
-            QMetaObject.invokeMethod(self.run_macro_btn, "setText", Qt.QueuedConnection, Q_ARG(str, "▶ Run Macro (Immediate)"))
+            QMetaObject.invokeMethod(self.run_macro_btn, "setText", Qt.QueuedConnection, Q_ARG(str, "Run Macro (Immediate)"))
         
         threading.Thread(target=_run, daemon=True).start()
 

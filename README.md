@@ -12,6 +12,29 @@ It provides an interface for video capture (up to 1080p @ 60fps) and programmati
 - **Standard Protocol Implementation**: Bypasses legacy proprietary protocols by utilizing standard HID and UVC interfaces.
 - **Automated Monitoring**: Implements automated target re-enumeration and status monitoring (Resolution, Signal Active, Keyboard LEDs).
 
+## Windows Portable Release
+
+GitHub Releases can provide a Windows-consumable portable ZIP containing the SDK,
+GUI, utilities, requirements, documentation, and local dependency/launch helpers.
+The archive intentionally uses the host Python installation rather than bundling an
+untested hardware-access executable.
+
+After extracting a release asset:
+
+1. Run `Install-Dependencies.cmd` to create a local `.venv` and install dependencies.
+2. Run `Run-AgentKVM2USB.cmd` to start the GUI.
+3. Verify the ZIP against its sibling `.sha256` release asset before extraction.
+
+Maintainers can build and publish the assets locally without GitHub Actions:
+
+```powershell
+py -3 scripts\build_portable.py
+py -3 scripts\release.py --tag v0.2.0
+```
+
+See [PACKAGING.md](PACKAGING.md) for the complete build, release, checksum, hardware,
+and Windows Package Foundry integration guidance.
+
 ## Quick Start
 
 ### 1. Install Dependencies
@@ -48,15 +71,41 @@ sdk.close()
 ## Project Structure
 - `epiphan_sdk.py`: Core SDK library.
 - `test_sdk.py`: Test suite (supports hardware & mock testing).
+- `PROJECT_STATUS.md`: Current triage, validation results, known gaps, and phased remediation strategy.
 - `HARDWARE_REPORT.md`: Reverse-engineering documentation and component analysis.
 - `BACKLOG.md`: Development roadmap and protocol research notes.
 - `AGENTS.md`: Dedicated instructions for AI agents operating the SDK.
 - `MACROS.md`: Documentation for the Macro Engine DSL.
+- `PACKAGING.md`: Local Windows artifact, release, and Package Foundry guidance.
+- `scripts/`: Local portable-build and GitHub Release scripts.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:
 ```bash
 pytest -v test_sdk.py
+```
+
+For repository-wide syntax validation:
+
+```bash
+python -m compileall -q .
+```
+
+Hardware validation requires the physical Epiphan KVM2USB and a powered target. See
+`PROJECT_STATUS.md` for the latest observed HID/UVC status and current signal-path
+limitations.
+
+Per-run config, user presets, screenshots, recordings, SRT files, and session logs
+are written under:
+
+```text
+runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/
+```
+
+To emit machine-consumable hardware diagnostics:
+
+```bash
+python hardware_probe.py --capture
 ```
 
 ## Contributing

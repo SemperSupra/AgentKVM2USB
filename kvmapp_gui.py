@@ -6,9 +6,9 @@ import numpy as np
 import threading
 import subprocess
 from PySide6.QtCore import Qt, QTimer, QSize, QPoint
-from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor
+from PySide6.QtGui import QImage, QPixmap, QAction, QIcon, QKeySequence, QGuiApplication, QCursor, QPalette
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
-                             QWidget, QStatusBar, QToolBar, QFileDialog, QMessageBox)
+                             QWidget, QStatusBar, QToolBar, QFileDialog, QMessageBox, QStyle)
 from epiphan_sdk import EpiphanKVM_SDK
 from settings_dialog import SettingsDialog
 
@@ -55,12 +55,17 @@ class KvmAppGUI(QMainWindow):
         self.is_grabbed = False
         self.host_key = Qt.Key_Control
         self._is_switching = False
+        self.show_host_cursor = True
         self.user_prefix = "dev" # Default prefix
         
         # Central Widget
-        self.video_label = QLabel("INITIALIZING HARDWARE...")
+        self.video_label = QLabel("Initializing hardware...")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setStyleSheet("background-color: #111; color: #aaa; font-family: 'Consolas'; font-size: 18px;")
+        self.video_label.setAutoFillBackground(True)
+        palette = self.video_label.palette()
+        palette.setColor(self.video_label.backgroundRole(), self.palette().color(QPalette.ColorRole.Base))
+        palette.setColor(self.video_label.foregroundRole(), self.palette().color(QPalette.ColorRole.PlaceholderText))
+        self.video_label.setPalette(palette)
         self.setCentralWidget(self.video_label)
         
         self.setMouseTracking(True)
@@ -92,18 +97,13 @@ class KvmAppGUI(QMainWindow):
         file_m.addSeparator()
         file_m.addAction("E&xit", self.close, "Alt+F4")
 
-    def cleanup_data(self):
-        msg = "Are you sure you want to delete all snapshots and logs older than 7 days?"
-        if QMessageBox.question(self, "Cleanup", msg) == QMessageBox.Yes:
-            count = self.sdk.cleanup_session_data(days=7)
-            self.status.showMessage(f"Cleanup complete. Removed {count} files.", 5000)
-            QMessageBox.information(self, "Cleanup", f"Successfully removed {count} old files.")
-        
         # View
         view_m = mb.addMenu("&View")
         self.fs_act = view_m.addAction("&Full Screen", self.toggle_fullscreen, "F11")
         self.fs_act.setCheckable(True)
-        view_m.addAction("Show &Host Cursor", self.toggle_cursor_vis).setCheckable(True)
+        self.cursor_act = view_m.addAction("Show &Host Cursor", self.toggle_cursor_vis)
+        self.cursor_act.setCheckable(True)
+        self.cursor_act.setChecked(True)
         
         # Devices (Manual Selection)
         self.dev_m = mb.addMenu("&Devices")
@@ -151,21 +151,28 @@ class KvmAppGUI(QMainWindow):
         opt_m.addAction("&Settings...", self.open_settings)
         opt_m.addAction("&Configuration tool...", self.run_config_tool)
 
+    def cleanup_data(self):
+        msg = "Are you sure you want to delete all snapshots and logs older than 7 days?"
+        if QMessageBox.question(self, "Cleanup", msg) == QMessageBox.Yes:
+            count = self.sdk.cleanup_session_data(days=7)
+            self.status.showMessage(f"Cleanup complete. Removed {count} files.", 5000)
+            QMessageBox.information(self, "Cleanup", f"Successfully removed {count} old files.")
+
     def _create_toolbar(self):
         tb = self.addToolBar("Main")
         tb.setMovable(False)
-        tb.addAction("📸 Capture", self.save_screenshot)
-        tb.addAction("📋 Copy", self.copy_to_clipboard)
+        tb.addAction(self.style().standardIcon(QStyle.SP_DialogSaveButton), "Capture", self.save_screenshot)
+        tb.addAction(self.style().standardIcon(QStyle.SP_FileDialogDetailedView), "Copy", self.copy_to_clipboard)
         tb.addSeparator()
         
         # Motion Sensitivity Quick Toggle
-        self.sens_btn = tb.addAction("⚡ Sens: Med", self.toggle_sensitivity_quick)
+        self.sens_btn = tb.addAction("Sensitivity: Medium", self.toggle_sensitivity_quick)
         self.sens_level = 1 # 0=Low, 1=Med, 2=High
         
         tb.addSeparator()
-        tb.addAction("🔄 Reconnect", self.sdk.reenumerate_target)
+        tb.addAction(self.style().standardIcon(QStyle.SP_BrowserReload), "Reconnect", self.sdk.reenumerate_target)
         tb.addSeparator()
-        self.grab_btn = tb.addAction("🔒 Grab Input (Ctrl+G)", self.toggle_grab)
+        self.grab_btn = tb.addAction(self.style().standardIcon(QStyle.SP_ComputerIcon), "Grab Input (Ctrl+G)", self.toggle_grab)
 
     def toggle_sensitivity_quick(self):
         self.sens_level = (self.sens_level + 1) % 3
@@ -176,7 +183,8 @@ class KvmAppGUI(QMainWindow):
         ]
         label, thresh, area = levels[self.sens_level]
         self.sdk.motion_detector.update_params(threshold=thresh, min_area=area)
-        self.sens_btn.setText(f"⚡ Sens: {label}")
+        label_text = "Medium" if label == "Med" else label
+        self.sens_btn.setText(f"Sensitivity: {label_text}")
         self.status.showMessage(f"Motion Sensitivity set to {label}", 3000)
 
     def _create_status_bar(self):
@@ -231,18 +239,18 @@ class KvmAppGUI(QMainWindow):
             self.video_label.setPixmap(px.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             if self.sdk.cap is None:
-                self.video_label.setText("NO HARDWARE DETECTED\nSelect a device from the 'Devices' menu")
+                self.video_label.setText("No hardware detected\nSelect a device from the Devices menu")
             else:
-                self.video_label.setText("NO SIGNAL DETECTED\nCheck physical VGA/DVI connection")
+                self.video_label.setText("No signal detected\nCheck the physical VGA/DVI connection")
 
     def toggle_grab(self):
         self.is_grabbed = not self.is_grabbed
         if self.is_grabbed:
-            self.grab_btn.setText("🔓 Release Input (Ctrl)")
+            self.grab_btn.setText("Release Input (Ctrl)")
             self.setCursor(Qt.BlankCursor if self.mouse_mode == "relative" else Qt.CrossCursor)
             self.status.showMessage("INPUT GRABBED. Press CTRL to release.", 5000)
         else:
-            self.grab_btn.setText("🔒 Grab Input (Ctrl+G)")
+            self.grab_btn.setText("Grab Input (Ctrl+G)")
             self.setCursor(Qt.ArrowCursor)
             self.status.showMessage("Input Released", 2000)
 
@@ -303,7 +311,8 @@ class KvmAppGUI(QMainWindow):
         self.sdk.enable_overlays = checked
 
     def toggle_srt(self, checked):
-        pass
+        state = "enabled" if checked else "disabled"
+        self.status.showMessage(f"SRT generation {state}", 3000)
 
     def set_mouse_mode(self, mode):
         self.mouse_mode = mode
@@ -336,14 +345,17 @@ class KvmAppGUI(QMainWindow):
         else:
             self.is_recording = False
             self.rec_act.setText("Start Recording")
+            self.sdk.stop_recording()
             self.status.showMessage("Recording Stopped", 3000)
 
     def toggle_fullscreen(self, checked):
         if checked: self.showFullScreen()
         else: self.showNormal()
 
-    def toggle_cursor_vis(self):
-        pass
+    def toggle_cursor_vis(self, checked):
+        self.show_host_cursor = checked
+        if not self.is_grabbed:
+            self.setCursor(Qt.ArrowCursor if checked else Qt.BlankCursor)
 
     def open_settings(self):
         dlg = SettingsDialog(self.sdk, self)
@@ -362,7 +374,6 @@ class KvmAppGUI(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyle("Fusion")
     win = KvmAppGUI()
     win.show()
     sys.exit(app.exec())
