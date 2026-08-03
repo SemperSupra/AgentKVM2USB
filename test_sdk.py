@@ -261,9 +261,22 @@ class TestEpiphanKVM_Enhanced:
             *list("0123456789"),
             "enter", "esc", "backspace", "tab", "space",
             "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
-            "delete", "up", "down", "left", "right",
+            "printscreen", "scrolllock", "pause", "insert", "home", "pageup",
+            "delete", "end", "pagedown", "up", "down", "left", "right",
+            "numlock", "capslock",
         }
         assert expected.issubset(EpiphanKVM_SDK.KEY_MAP.keys())
+
+    def test_run_macro_reports_hid_write_results(self, mocker):
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.press = mocker.Mock(return_value={"press": 9, "release": 9})
+        sdk.hotkey = mocker.Mock(return_value={"press": 9, "release": 9})
+
+        result = sdk.run_macro("PRESS f2\nHOTKEY ctrl alt delete")
+
+        assert result["success"] is True
+        assert result["executed"][0]["write_result"] == {"press": 9, "release": 9}
+        assert result["executed"][1]["write_result"] == {"press": 9, "release": 9}
 
     def test_click_clamps_normalized_coordinates(self, sdk):
         """Protects HID reports from invalid normalized click coordinates."""
@@ -296,6 +309,16 @@ class TestEpiphanKVM_Enhanced:
         sdk._raw_kb(0x01, [EpiphanKVM_SDK.KEY_MAP["delete"]])
 
         assert reports == [[1, 1, 0, 76, 0, 0, 0, 0, 0]]
+
+    def test_raw_keyboard_returns_write_count(self):
+        class FakeKeyboardDevice:
+            def write(self, report):
+                return len(report)
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk.kb_dev = FakeKeyboardDevice()
+
+        assert sdk._raw_kb(0, [EpiphanKVM_SDK.KEY_MAP["f2"]]) == 9
 
     def test_raw_mouse_uses_vendor_report_id_and_clamps_signed_deltas(self):
         """Matches the official KvmApp relative mouse HID output framing."""

@@ -70,8 +70,16 @@ Injects the literal string characters sequentially.
 **Example:** `TYPE admin`
 
 ### `PRESS <key>`
-Injects a down/up sequence for a specified key. Valid keys: a-z, 0-9, `enter`, `esc`, `backspace`, `tab`, `space`, `f1`-`f12`, `delete`, `up`, `down`, `left`, `right`.
+Injects a down/up sequence for a specified key. Valid keys: a-z, 0-9,
+`enter`, `esc`, `backspace`, `tab`, `space`, `f1`-`f12`,
+`printscreen`, `scrolllock`, `pause`, `insert`, `home`, `pageup`,
+`delete`, `end`, `pagedown`, `up`, `down`, `left`, `right`, `numlock`,
+and `capslock`.
 **Example:** `PRESS enter`
+
+Live macro results include `write_result` entries for HID commands. A successful
+keyboard report normally shows `{"press": 9, "release": 9}` for the recovered
+KVM2USB 3.0 report-ID layout.
 
 ### `HOTKEY <mod1> <mod2> ... <key>`
 Injects a combination of modifier keys and a final key simultaneously. Valid modifiers: `ctrl`, `shift`, `alt`, `gui`, `win`, `cmd`.

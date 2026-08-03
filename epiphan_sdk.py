@@ -33,8 +33,12 @@ class EpiphanKVM_SDK:
         "enter": 0x28, "esc": 0x29, "backspace": 0x2A, "tab": 0x2B, "space": 0x2C,
         "f1": 0x3A, "f2": 0x3B, "f3": 0x3C, "f4": 0x3D, "f5": 0x3E,
         "f6": 0x3F, "f7": 0x40, "f8": 0x41, "f9": 0x42, "f10": 0x43,
-        "f11": 0x44, "f12": 0x45, "delete": 0x4C,
-        "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52
+        "f11": 0x44, "f12": 0x45,
+        "printscreen": 0x46, "scrolllock": 0x47, "pause": 0x48,
+        "insert": 0x49, "home": 0x4A, "pageup": 0x4B, "delete": 0x4C,
+        "end": 0x4D, "pagedown": 0x4E,
+        "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52,
+        "numlock": 0x53, "capslock": 0x39
     }
     MOD_MAP = {"ctrl": 0x01, "shift": 0x02, "alt": 0x04, "gui": 0x08, "win": 0x08, "cmd": 0x08}
 
@@ -447,33 +451,36 @@ class EpiphanKVM_SDK:
         x_percent = min(max(float(x_percent), 0.0), 1.0)
         y_percent = min(max(float(y_percent), 0.0), 1.0)
         self._log_event("MOUSE_CLICK", f"{x_percent:.2f},{y_percent:.2f} btn={button}")
-        if not self.touch_dev: return
+        if not self.touch_dev:
+            return {"press": None, "release": None}
         x = int(x_percent * 32767); y = int(y_percent * 32767)
-        self._raw_touch(button & 0xFF, x, y)
+        press_result = self._raw_touch(button & 0xFF, x, y)
         time.sleep(0.1)
-        self._raw_touch(0, x, y)
+        release_result = self._raw_touch(0, x, y)
+        return {"press": press_result, "release": release_result}
 
     def move_mouse_relative(self, dx, dy, wheel=0, buttons=0):
         """Moves the target pointer with the recovered relative mouse HID report."""
         self._log_event("MOUSE_MOVE_REL", f"dx={dx} dy={dy} wheel={wheel} buttons={buttons}")
-        self._raw_mouse(buttons, dx, dy, wheel)
+        return self._raw_mouse(buttons, dx, dy, wheel)
 
     def mouse_button(self, button=1, pressed=True):
         """Sends a relative mouse button state without pointer movement."""
         self._log_event("MOUSE_BUTTON", f"button={button} pressed={pressed}")
         buttons = int(button) & 0xFF if pressed else 0
-        self._raw_mouse(buttons, 0, 0, 0)
+        return self._raw_mouse(buttons, 0, 0, 0)
 
     def mouse_click_relative(self, button=1):
         """Clicks using the relative mouse HID collection."""
-        self.mouse_button(button, pressed=True)
+        press_result = self.mouse_button(button, pressed=True)
         time.sleep(0.05)
-        self.mouse_button(button, pressed=False)
+        release_result = self.mouse_button(button, pressed=False)
+        return {"press": press_result, "release": release_result}
 
     def scroll_mouse(self, wheel):
         """Scrolls using the relative mouse HID collection."""
         self._log_event("MOUSE_SCROLL", str(wheel))
-        self._raw_mouse(0, 0, 0, wheel)
+        return self._raw_mouse(0, 0, 0, wheel)
 
     def type(self, text):
         self._log_event("KEYBOARD_TYPE", text)
@@ -484,7 +491,12 @@ class EpiphanKVM_SDK:
     def press(self, key_name):
         self._log_event("KEYBOARD_PRESS", key_name)
         code = self.KEY_MAP.get(key_name.lower())
-        if code: self._raw_kb(0, [code]); time.sleep(0.02); self._raw_kb(0, [0])
+        if not code:
+            return {"press": None, "release": None}
+        press_result = self._raw_kb(0, [code])
+        time.sleep(0.02)
+        release_result = self._raw_kb(0, [0])
+        return {"press": press_result, "release": release_result}
 
     def hotkey(self, *args):
         self._log_event("KEYBOARD_HOTKEY", "+".join(args))
@@ -493,7 +505,10 @@ class EpiphanKVM_SDK:
             a = a.lower()
             if a in self.MOD_MAP: mods |= self.MOD_MAP[a]
             elif a in self.KEY_MAP: keys.append(self.KEY_MAP[a])
-        self._raw_kb(mods, keys); time.sleep(0.05); self._raw_kb(0, [0])
+        press_result = self._raw_kb(mods, keys)
+        time.sleep(0.05)
+        release_result = self._raw_kb(0, [0])
+        return {"press": press_result, "release": release_result}
 
     def run_macro(self, macro_script: str, dry_run=False):
         """
@@ -533,18 +548,24 @@ class EpiphanKVM_SDK:
                     if key.lower() not in self.KEY_MAP:
                         self._macro_error(result, line_num, line, f"Unknown key '{key}'")
                     elif not dry_run:
-                        self.press(key)
+                        write_result = self.press(key)
                     if key.lower() in self.KEY_MAP:
-                        result["executed"].append({"line": line_num, "command": cmd, "args": {"key": key}})
+                        entry = {"line": line_num, "command": cmd, "args": {"key": key}}
+                        if not dry_run:
+                            entry["write_result"] = write_result
+                        result["executed"].append(entry)
                 elif cmd == "HOTKEY":
                     keys = [k.strip() for k in args.split()]
                     invalid = [k for k in keys if k.lower() not in self.MOD_MAP and k.lower() not in self.KEY_MAP]
                     if invalid:
                         self._macro_error(result, line_num, line, f"Unknown key/modifier '{invalid[0]}'")
                     elif not dry_run:
-                        self.hotkey(*keys)
+                        write_result = self.hotkey(*keys)
                     if not invalid:
-                        result["executed"].append({"line": line_num, "command": cmd, "args": {"keys": keys}})
+                        entry = {"line": line_num, "command": cmd, "args": {"keys": keys}}
+                        if not dry_run:
+                            entry["write_result"] = write_result
+                        result["executed"].append(entry)
                 elif cmd == "CLICK":
                     click_args = [arg.strip() for arg in args.split()]
                     if len(click_args) >= 2:
@@ -552,12 +573,15 @@ class EpiphanKVM_SDK:
                         y = float(click_args[1])
                         button = int(click_args[2]) if len(click_args) > 2 else 1
                         if not dry_run:
-                            self.click(x, y, button)
-                        result["executed"].append({
+                            write_result = self.click(x, y, button)
+                        entry = {
                             "line": line_num,
                             "command": cmd,
                             "args": {"x": x, "y": y, "button": button},
-                        })
+                        }
+                        if not dry_run:
+                            entry["write_result"] = write_result
+                        result["executed"].append(entry)
                     else:
                         self._macro_error(result, line_num, line, "CLICK requires at least x_percent and y_percent")
                 elif cmd == "MOVE":
@@ -567,19 +591,25 @@ class EpiphanKVM_SDK:
                         dy = int(move_args[1])
                         wheel = int(move_args[2]) if len(move_args) > 2 else 0
                         if not dry_run:
-                            self.move_mouse_relative(dx, dy, wheel)
-                        result["executed"].append({
+                            write_result = self.move_mouse_relative(dx, dy, wheel)
+                        entry = {
                             "line": line_num,
                             "command": cmd,
                             "args": {"dx": dx, "dy": dy, "wheel": wheel},
-                        })
+                        }
+                        if not dry_run:
+                            entry["write_result"] = write_result
+                        result["executed"].append(entry)
                     else:
                         self._macro_error(result, line_num, line, "MOVE requires dx and dy")
                 elif cmd == "SCROLL":
                     wheel = int(args.strip())
                     if not dry_run:
-                        self.scroll_mouse(wheel)
-                    result["executed"].append({"line": line_num, "command": cmd, "args": {"wheel": wheel}})
+                        write_result = self.scroll_mouse(wheel)
+                    entry = {"line": line_num, "command": cmd, "args": {"wheel": wheel}}
+                    if not dry_run:
+                        entry["write_result"] = write_result
+                    result["executed"].append(entry)
                 else:
                     self._macro_error(result, line_num, line, f"Unknown command '{cmd}'")
             except Exception as e:
@@ -884,14 +914,14 @@ class EpiphanKVM_SDK:
         return self._send_feature_report(self.sys_dev, [self.HID_REPORT_TOUCH_TYPE, int(touch_type) & 0xFF])
 
     def _raw_kb(self, mods, keys):
-        if not self.kb_dev: return
+        if not self.kb_dev: return None
         r = [0x00]*8; r[0] = mods
         for i, k in enumerate(keys[:6]): r[2+i] = k
-        self._write_hid_report(self.kb_dev, [self.HID_REPORT_KEYBOARD] + r, r)
+        return self._write_hid_report(self.kb_dev, [self.HID_REPORT_KEYBOARD] + r, r)
 
     def _raw_mouse(self, buttons, dx, dy, wheel=0):
         if not self.mouse_dev:
-            return
+            return None
 
         def s8(value):
             value = min(max(int(value), -127), 127)
@@ -904,11 +934,11 @@ class EpiphanKVM_SDK:
             s8(dy),
             s8(wheel),
         ]
-        self._write_hid_report(self.mouse_dev, report, report[1:])
+        return self._write_hid_report(self.mouse_dev, report, report[1:])
 
     def _raw_touch(self, flags, x, y):
         if not self.touch_dev:
-            return
+            return None
         flags = (flags | 0x02) & 0xFF
         report = [
             self.HID_REPORT_TOUCH,
@@ -919,7 +949,7 @@ class EpiphanKVM_SDK:
             (y >> 8) & 0xFF,
             0x00,
         ]
-        self._write_hid_report(self.touch_dev, report, report[1:-1])
+        return self._write_hid_report(self.touch_dev, report, report[1:-1])
 
     def _write_hid_report(self, dev, report, legacy_report=None):
         try:
