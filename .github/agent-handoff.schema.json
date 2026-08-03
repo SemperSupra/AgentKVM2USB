@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SemperSupra/AgentKVM2USB/blob/main/.github/agent-handoff.schema.json",
+  "title": "Agent work handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "actor",
+    "repository",
+    "issue",
+    "branch",
+    "base_sha",
+    "head_sha",
+    "assigned_slice",
+    "validation",
+    "blockers",
+    "next_step",
+    "safety"
+  ],
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "enum": ["START", "CHECKPOINT", "DECISION", "BLOCKER", "HANDOFF"]
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "environment"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "enum": ["web-agent", "terminal-agent", "human", "automation"]},
+        "environment": {"type": "string", "minLength": 1}
+      }
+    },
+    "repository": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+    "issue": {"type": "integer", "minimum": 1},
+    "pull_request": {"type": ["integer", "null"], "minimum": 1},
+    "branch": {"type": "string", "minLength": 1},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+    "assigned_slice": {"type": "string", "minLength": 1},
+    "changed_paths": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "commits": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+      "uniqueItems": true
+    },
+    "validation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "result"],
+        "properties": {
+          "command": {"type": "string", "minLength": 1},
+          "result": {"type": "string", "enum": ["pass", "fail", "blocked", "not-run"]},
+          "summary": {"type": "string"},
+          "artifact": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["location", "classification"],
+        "properties": {
+          "location": {"type": "string", "minLength": 1},
+          "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "classification": {"type": "string", "enum": ["public", "sanitized", "private-reference"]}
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "authority"],
+        "properties": {
+          "decision": {"type": "string", "minLength": 1},
+          "authority": {"type": "string", "minLength": 1},
+          "reference": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "human_actions": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "next_step": {"type": "string", "minLength": 1},
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["constraints_observed", "prohibited_actions_not_performed"],
+      "properties": {
+        "constraints_observed": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "prohibited_actions_not_performed": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    }
+  }
+}
