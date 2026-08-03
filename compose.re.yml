@@ -1,0 +1,95 @@
+name: agentkvm2usb-re
+
+x-runtime-defaults: &runtime-defaults
+  init: true
+  network_mode: none
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=512m
+
+services:
+  runner:
+    <<: *runtime-defaults
+    image: ${RE_RUNNER_IMAGE:-agentkvm2usb/re-runner:1}
+    build:
+      context: .
+      dockerfile: containers/re-runner/Dockerfile
+    working_dir: /work
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/work/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/work/output:rw
+      - ${RE_PROJECT_ROOT:-./.work/re/projects}:/work/projects:rw
+      - ${RE_VENDOR_ROOT:-./.work/vendor}:/work/vendor:ro
+      - ./scripts:/work/scripts:ro
+      - ./tools/re:/work/tools:ro
+    entrypoint: ["/bin/bash", "-lc"]
+    command: ["python3 --version && tshark --version | head -n 1"]
+
+  radare2:
+    <<: *runtime-defaults
+    image: ${RADARE2_IMAGE:-radare/radare2:6.1.8}
+    working_dir: /work
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/work/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/work/output:rw
+      - ${RE_PROJECT_ROOT:-./.work/re/projects}:/work/projects:rw
+    entrypoint: ["r2"]
+    command: ["-v"]
+
+  angr:
+    <<: *runtime-defaults
+    image: ${ANGR_IMAGE:-angr/angr:latest}
+    working_dir: /work
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/work/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/work/output:rw
+      - ${RE_PROJECT_ROOT:-./.work/re/projects}:/work/projects:rw
+      - ./scripts:/work/scripts:ro
+    entrypoint: ["python3"]
+    command: ["-c", "import angr; print(angr.__version__)"]
+
+  ghidra:
+    <<: *runtime-defaults
+    image: ${GHIDRA_IMAGE:-agentkvm2usb/ghidra:12.1.2-upstream}
+    environment:
+      MODE: headless
+      GHIDRA_HEADLESS_MAXMEM: ${GHIDRA_HEADLESS_MAXMEM:-4G}
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/home/ghidra/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/home/ghidra/output:rw
+      - ${RE_PROJECT_ROOT:-./.work/re/projects}:/home/ghidra/projects:rw
+      - ./scripts:/home/ghidra/scripts:ro
+    command: []
+
+  binwalk:
+    <<: *runtime-defaults
+    image: ${BINWALK_IMAGE:-agentkvm2usb/binwalk:3.1.0-upstream}
+    working_dir: /analysis
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/analysis/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/analysis/output:rw
+    entrypoint: ["binwalk"]
+    command: ["--help"]
+
+  syft:
+    <<: *runtime-defaults
+    image: ${SYFT_IMAGE:-anchore/syft:latest}
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/input:ro
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/output:rw
+    entrypoint: ["syft"]
+    command: ["version"]
+
+  trivy:
+    <<: *runtime-defaults
+    image: ${TRIVY_IMAGE:-aquasec/trivy:latest}
+    volumes:
+      - ${RE_INPUT_ROOT:-./.work/re/input}:/input:ro
+      - ${RE_CACHE_ROOT:-./.work/re/cache}/trivy:/root/.cache/trivy:rw
+      - ${RE_OUTPUT_ROOT:-./.work/re/output}:/output:rw
+    entrypoint: ["trivy"]
+    command: ["--version"]
