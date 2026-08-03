@@ -34,7 +34,7 @@ class drivers and WinUSB/libusb only for vendor-specific control interfaces.
 | --- | --- | --- |
 | Public integration | `SemperSupra/AgentKVM2USB` | Host app, public protocol libraries, diagnostics, sanitized docs, tests, release packaging. No proprietary vendor binaries. |
 | Private evidence vault | `SemperSupra/AgentKVM2USB-research-private` or encrypted object store | Vendor installers, firmware packages, extracted binaries, captures, photos, flash dumps, traces, restricted docs, chain-of-custody records. |
-| Public clean implementation | `SemperSupra/OpenKVM2USB` | Clean host/protocol/fx3/fpga/hardware/tooling implementation that consumes only public docs, sanitized specs, test vectors, measurements, and facts. |
+| Private clean implementation, public later | `SemperSupra/OpenKVM2USB` | Initially private clean host/protocol/fx3/fpga/hardware/tooling implementation that consumes only public docs, sanitized specs, test vectors, measurements, and facts. Make public only after provenance, licensing, and safety review. |
 
 The clean implementation repository should use separate sessions or agents for
 evidence analysis, specification writing, and implementation. Each session must
@@ -114,7 +114,8 @@ Before any write:
 
 1. Close out PR `#6` without adding new reverse-engineering scope.
 2. Create the private evidence repository.
-3. Create the public `OpenKVM2USB` repository and epic.
+3. Create the private `OpenKVM2USB` repository and epic; defer public visibility
+   until provenance, licensing, and safety gates are satisfied.
 4. Add artifact, experiment, and environment schemas.
 5. Acquire the FX3 SDK, ISE VM, and public documentation.
 6. Verify one FX3 sample build and one XC6SLX16 sample bitstream.
