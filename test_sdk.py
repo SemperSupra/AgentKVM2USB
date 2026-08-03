@@ -406,6 +406,35 @@ class TestEpiphanKVM_Enhanced:
             ("user_mode", 2, 250),
         ]
 
+    def test_capture_compression_request_reports_backend_refusal(self):
+        class FakeCapture:
+            def __init__(self):
+                self.opened = True
+
+            def isOpened(self):
+                return self.opened
+
+            def set(self, prop, value):
+                return True
+
+            def get(self, prop):
+                return cv2.VideoWriter_fourcc(*"YUY2")
+
+        sdk = EpiphanKVM_SDK.__new__(EpiphanKVM_SDK)
+        sdk._lock = threading.Lock()
+        sdk.cap = FakeCapture()
+        sdk.current_camera_name = None
+
+        result = sdk.set_capture_compression_request(True)
+
+        assert result == {
+            "success": False,
+            "requested_fourcc": "MJPG",
+            "actual_fourcc": "YUY2",
+            "changed": False,
+            "error": "capture backend did not accept requested FOURCC",
+        }
+
     def test_parse_config_input_status_payload(self):
         """Documents the recovered MI_00 request 0xB2 InputStatusInfo layout."""
         payload = bytearray(29)
@@ -835,6 +864,15 @@ class TestKvmAppGUI:
                     ],
                 }
 
+            def set_capture_compression_request(self, checked):
+                return {
+                    "success": False,
+                    "requested_fourcc": "MJPG",
+                    "actual_fourcc": "YUY2",
+                    "changed": False,
+                    "error": "capture backend did not accept requested FOURCC",
+                }
+
             def reenumerate_target(self):
                 pass
 
@@ -897,6 +935,12 @@ class TestKvmAppGUI:
 
         assert "RGB 1920x1080p@60.318, HDMI" in info.call_args[0][2]
         assert "User mode 3: 65535x65535, disabled" in info.call_args[0][2]
+
+    def test_capture_compression_action_rolls_back_when_backend_refuses(self, window):
+        window.perf_act.setChecked(True)
+        window.toggle_capture_compression(True)
+
+        assert window.perf_act.isChecked() is False
 
 
 class TestHardwareProbeHelpers:

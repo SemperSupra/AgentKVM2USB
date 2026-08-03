@@ -954,36 +954,26 @@ class EpiphanKVM_SDK:
             disabled,
         ]
 
-    def set_performance_mode(self, enabled):
-        """Toggles between MJPG (compressed) and YUY2 (uncompressed) modes."""
+    def set_capture_compression_request(self, enabled):
+        """Requests MJPG/YUY2 on the local UVC capture path without writing MI_00 flags."""
         with self._lock:
             if not self.cap or not self.cap.isOpened():
-                return
+                return {
+                    "success": False,
+                    "requested_fourcc": "MJPG" if enabled else "YUY2",
+                    "actual_fourcc": None,
+                    "changed": False,
+                    "error": "camera is not open",
+                }
 
-            # Identify current camera state
-            current_index = 0
-            # We don't store the index directly, but we can infer it or just use the current camera name
-            # Actually, switch_camera already handles index and name. 
-            # Let's find the current index by re-scanning if needed, or store it.
+            requested_fourcc = "MJPG" if enabled else "YUY2"
+            code = cv2.VideoWriter_fourcc(*requested_fourcc)
 
-            # Better: set_performance_mode should just update a flag and then 
-            # we trigger a re-initialization of the capture.
-
-            self.performance_mode_enabled = enabled
-            code = cv2.VideoWriter_fourcc(*'MJPG') if enabled else cv2.VideoWriter_fourcc(*'YUY2')
-
-            # Attempt to set it directly first (some backends allow this)
             self.cap.set(cv2.CAP_PROP_FOURCC, code)
 
-            # Verify if it worked (OpenCV 4+ often ignores this)
             actual_code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
             if actual_code != code:
-                # If direct set failed, we MUST restart the capture
-                # But we don't want to lose the stream in the GUI
-                # So we'll just flag it for the next switch_camera or 
-                # do a quick restart if a camera is active.
                 if self.current_camera_name:
-                    # Find index from name
                     cameras = self.list_available_cameras()
                     target_idx = -1
                     for idx, name in cameras:
@@ -991,15 +981,34 @@ class EpiphanKVM_SDK:
                             target_idx = idx; break
 
                     if target_idx != -1:
-                        # We release and reopen
                         self.cap.release()
                         backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
                         self.cap = cv2.VideoCapture(target_idx, backend)
                         self.cap.set(cv2.CAP_PROP_FOURCC, code)
                         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
                         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                        return True
-            return False
+                        actual_code = int(self.cap.get(cv2.CAP_PROP_FOURCC))
+            actual_fourcc = self._fourcc_text(actual_code)
+            changed = actual_code == code
+            return {
+                "success": changed,
+                "requested_fourcc": requested_fourcc,
+                "actual_fourcc": actual_fourcc,
+                "changed": changed,
+                "error": None if changed else "capture backend did not accept requested FOURCC",
+            }
+
+    def set_performance_mode(self, enabled):
+        """Compatibility alias for the local capture-compression request."""
+        return self.set_capture_compression_request(enabled)
+
+    @staticmethod
+    def _fourcc_text(code):
+        if code is None:
+            return None
+        text = "".join(chr((int(code) >> (8 * i)) & 0xFF) for i in range(4))
+        return text if text.strip("\x00") else None
+
     def set_camera_property(self, prop_name, value):
         """Sets an OpenCV camera property (e.g., brightness, contrast)."""
         prop_map = {

@@ -164,6 +164,12 @@ The read-only path is now integrated for application use:
 | GUI Tools -> Read Config Status | Performs one on-demand read-only query and displays the parsed result, including all three user-mode slots |
 | `scripts/capture_mi00_experiment.py` | Writes deterministic read-only experiment artifacts for replay and USBPcap correlation |
 
+The GUI action for capture compression is intentionally labeled `Request MJPG
+Capture`. It only requests a local UVC/OpenCV FOURCC change and reports whether
+the capture backend accepted it. It does not write the recovered MI_00
+performance-mode flag (`0x04` in request `0xE3`), because that remains a
+vendor OUT device-write path.
+
 When MI_00 diagnostics are explicitly included, the SDK and hardware probe use
 MI_00 input-status activity as a third effective-signal evidence source beside
 HID and frame content. This is intended to explain future disagreements such as

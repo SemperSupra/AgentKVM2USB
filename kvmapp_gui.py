@@ -154,7 +154,7 @@ class KvmAppGUI(QMainWindow):
         self.abs_act.setCheckable(True)
         
         opt_m.addSeparator()
-        self.perf_act = opt_m.addAction("&Performance Mode", lambda: self.sdk.set_performance_mode(self.perf_act.isChecked()))
+        self.perf_act = opt_m.addAction("Request &MJPG Capture", self.toggle_capture_compression)
         self.perf_act.setCheckable(True)
         opt_m.addAction("&Reconnect Remote USB", self.sdk.reenumerate_target)
         opt_m.addSeparator()
@@ -353,6 +353,16 @@ class KvmAppGUI(QMainWindow):
         self.mouse_mode = mode
         self.rel_act.setChecked(mode == "relative")
         self.abs_act.setChecked(mode == "absolute")
+
+    def toggle_capture_compression(self, checked):
+        result = self.sdk.set_capture_compression_request(checked)
+        requested = result.get("requested_fourcc")
+        actual = result.get("actual_fourcc") or "unknown"
+        if result.get("success"):
+            self.status.showMessage(f"Capture format set to {actual}", 3000)
+            return
+        self.perf_act.setChecked(actual == "MJPG")
+        self.status.showMessage(f"{requested} not accepted; capture remains {actual}", 5000)
 
     def copy_to_clipboard(self):
         with self.sdk._lock:

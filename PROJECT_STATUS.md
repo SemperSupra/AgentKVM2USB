@@ -50,6 +50,7 @@ Observed:
 - `hardware_probe.py` now emits HID collection metadata, camera open state, frame statistics when available, and an `effectiveSignal` block that combines HID signal and visible frame evidence. With `--include-mi00`, it also performs guarded read-only MI_00 config-interface reads for source, mode, refresh, flags, and user-mode sentinel state, and includes MI_00 active status in effective-signal reconciliation.
 - When the GUI owns the DirectShow capture device, a separate probe may report `cameraState.opened: false`, `frameStats: null`, and `effectiveSignal.reason: hid_report`; this is expected camera ownership behavior rather than a signal failure.
 - DirectShow advertises YUY2-only capture modes from `640x360` through `1920x1200`, with each mode allowing approximately `15` to `60.0002` fps. OpenCV currently opens the KVM2USB through `DSHOW` at `1920x1080`, FOURCC `YUY2`.
+- The GUI no longer presents OpenCV FOURCC changes as device Performance Mode. The action is labeled `Request MJPG Capture`, returns a structured success/refusal result, and does not write the recovered MI_00 performance flag.
 - The enhanced probe observed `180` unique captured frames over `3` seconds, measured `60.0 fps`, while the Wyse firmware screen was static.
 - A Wyse reboot monitor captured Dell logo, PXE/media check, and `No bootable devices found` states with no HID live-mode resolution change or signal drop; all reported `1920x1080 active`.
 - No current read-only SDK path exposes the Wyse-facing EDID. Host WMI EDID queries only show the host displays, UVC exposes capture modes, HID usage `0x103` exposes live mode, and guarded MI_00 reads expose source/mode/refresh/flags but not raw EDID.
@@ -125,6 +126,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - `get_device_health()` now exposes combined HID, UVC-open, frame presence, frame blankness, stale-frame, and effective-signal state for agents and the GUI status bar. It can include MI_00 results only when explicitly called with `include_mi00=True`.
 - Effective-signal reasons now distinguish `hid_mi00_and_frame`, `hid_and_mi00`, `mi00_and_frame`, and `mi00_report` when MI_00 diagnostics are explicitly included.
 - SDK configuration helpers parse/build recovered MI_00 payloads, and the opt-in live config path sends only the approved vendor IN read requests.
+- The recovered MI_00 device Performance Mode flag is read-only in this branch. Writing it requires request `0xE3` and remains deferred until USBPcap confirmation and a hardware-safe write plan.
 - The live MI_00 probe is read-only by construction. It requires `--execute-read-only`, exposes only static-confirmed vendor IN requests, and has no code path for write/update requests.
 - User approval on 2026-08-03: start blocker 1, the read-only MI_00 config-interface probe. Guardrails: only vendor IN requests `0xB2`, `0xB3`, and `0xE2`; no OUT requests; no firmware/update/EDID writes; driver binding is a host-state change and must use the official INF only if needed.
 - User plan on 2026-08-03: another machine will be prepared for blocker 2, harmless HID injection validation.
