@@ -133,6 +133,18 @@ def test_unsupported_text_fails_and_clears_state():
     assert sdk.kb_dev.reports[-1] == (1, 0, 0, 0, 0, 0, 0, 0, 0)
 
 
+def test_unsupported_layout_fails_and_clears_state():
+    sdk = sdk_with_keyboard()
+    sdk.key_down("a")
+
+    result = sdk.type_text("a", layout="de")
+
+    assert not result.ok
+    assert result.code == "unsupported_layout"
+    assert sdk.keyboard_state.pressed_keys == ()
+    assert sdk.keyboard_state.active_modifiers == set()
+
+
 def test_write_failure_clears_logical_state_and_handles_no_stuck_key():
     sdk = sdk_with_keyboard(FakeKeyboard(fail_at=2))
 

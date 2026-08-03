@@ -518,6 +518,7 @@ class EpiphanKVM_SDK:
 
     def type_text(self, text, layout="us"):
         if layout.lower() != "us":
+            self.release_all()
             return KeyboardActionResult(False, "unsupported_layout", f"Unsupported keyboard layout {layout!r}.")
         reports = []
         for index, char in enumerate(text):
