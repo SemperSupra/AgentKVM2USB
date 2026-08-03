@@ -13,24 +13,33 @@ class KeyboardReportProfile:
 
     @classmethod
     def from_collection(cls, collection) -> "KeyboardReportProfile":
+        required = ("report_id", "report_length", "report_id_prefix", "rollover_limit")
+        missing = [name for name in required if getattr(collection, name, None) is None]
+        if missing:
+            raise KeyboardProfileError(
+                "missing_metadata",
+                f"Keyboard collection is missing required metadata: {', '.join(missing)}.",
+                missing=missing,
+            )
+        if not 0 <= collection.report_id <= 0xFF:
+            raise KeyboardProfileError("invalid_metadata", "Keyboard report_id must be 0..255.")
+        if collection.report_length < 2:
+            raise KeyboardProfileError("invalid_metadata", "Keyboard report_length must be at least 2.")
+        if collection.rollover_limit < 1 or collection.rollover_limit > collection.report_length - 2:
+            raise KeyboardProfileError("invalid_metadata", "Keyboard rollover_limit exceeds the report payload.")
         return cls(
-            report_id=collection.report_id if collection.report_id is not None else 1,
-            report_length=(
-                collection.report_length
-                if collection.report_length is not None
-                else 8
-            ),
-            report_id_prefix=(
-                collection.report_id_prefix
-                if collection.report_id_prefix is not None
-                else True
-            ),
-            rollover_limit=(
-                collection.rollover_limit
-                if collection.rollover_limit is not None
-                else 6
-            ),
+            report_id=collection.report_id,
+            report_length=collection.report_length,
+            report_id_prefix=collection.report_id_prefix,
+            rollover_limit=collection.rollover_limit,
         )
+
+
+class KeyboardProfileError(ValueError):
+    def __init__(self, code: str, message: str, **details):
+        super().__init__(message)
+        self.code = code
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -49,11 +58,13 @@ class KeyboardCodec:
     """Encode HID keyboard payloads without performing device I/O."""
 
     MODIFIERS = {
-        "ctrl": 0x01, "control": 0x01,
-        "shift": 0x02,
-        "alt": 0x04, "altgr": 0x04,
+        "lctrl": 0x01, "lshift": 0x02, "lalt": 0x04, "lgui": 0x08,
+        "rctrl": 0x10, "rshift": 0x20, "ralt": 0x40, "rgui": 0x80,
+        "ctrl": 0x01, "shift": 0x02, "alt": 0x04,
         "gui": 0x08, "win": 0x08, "cmd": 0x08, "meta": 0x08,
     }
+
+    MODIFIER_USAGES = {0xE0 + index: 1 << index for index in range(8)}
 
     NAMED_KEYS = {
         "enter": 0x28, "return": 0x28, "esc": 0x29, "escape": 0x29,
@@ -82,12 +93,21 @@ class KeyboardCodec:
     def normalize_modifier(self, key: str) -> str | None:
         normalized = str(key).lower()
         aliases = {
-            "ctrl": "ctrl", "control": "ctrl",
-            "shift": "shift",
-            "alt": "alt", "altgr": "alt",
-            "gui": "gui", "win": "gui", "cmd": "gui", "meta": "gui",
+            "ctrl": "lctrl", "control": "lctrl", "leftctrl": "lctrl", "lctrl": "lctrl",
+            "shift": "lshift", "leftshift": "lshift", "lshift": "lshift",
+            "alt": "lalt", "leftalt": "lalt", "lalt": "lalt",
+            "altgr": "ralt", "rightalt": "ralt", "ralt": "ralt",
+            "gui": "lgui", "win": "lgui", "cmd": "lgui", "meta": "lgui",
+            "leftgui": "lgui", "lgui": "lgui", "rightctrl": "rctrl", "rctrl": "rctrl",
+            "rightshift": "rshift", "rshift": "rshift", "rightgui": "rgui", "rgui": "rgui",
         }
         return aliases.get(normalized)
+
+    def modifier_for_usage(self, usage: int) -> str | None:
+        bit = self.MODIFIER_USAGES.get(usage)
+        if bit is None:
+            return None
+        return next(name for name, value in self.MODIFIERS.items() if value == bit and len(name) > 2)
 
     def usage_for_key(self, key: str) -> int | None:
         normalized = str(key).lower()
@@ -180,6 +200,11 @@ class KeyboardState:
         return KeyboardActionResult(True, reports=(report,)), report
 
     def key_down_usage(self, usage: int, label: str = "usage"):
+        modifier = self.codec.modifier_for_usage(usage)
+        if modifier is not None:
+            return self.key_down(modifier)
+        if not 1 <= usage <= 0xFF:
+            return self._error("invalid_usage", f"Keyboard usage {usage!r} is invalid."), None
         if usage in self.pressed_usages:
             return self._error("already_pressed", f"Key {label!r} is already pressed."), None
         if len(self.pressed_usages) >= self.codec.profile.rollover_limit:
@@ -212,6 +237,11 @@ class KeyboardState:
         return KeyboardActionResult(True, reports=(report,)), report
 
     def key_up_usage(self, usage: int, label: str = "usage"):
+        modifier = self.codec.modifier_for_usage(usage)
+        if modifier is not None:
+            return self.key_up(modifier)
+        if not 1 <= usage <= 0xFF:
+            return self._error("invalid_usage", f"Keyboard usage {usage!r} is invalid."), None
         if usage not in self.pressed_usages:
             return self._error("not_pressed", f"Key {label!r} is not pressed."), None
         self.pressed_usages.remove(usage)
