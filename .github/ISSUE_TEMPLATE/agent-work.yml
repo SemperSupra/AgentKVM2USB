@@ -1,0 +1,77 @@
+name: Agent workstream
+about: Create a bounded, repository-coordinated workstream for a human or agent
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GitHub is the authoritative coordination surface. Do not place required scope, decisions, validation, or handoff information only in chat or local notes.
+  - type: input
+    id: purpose
+    attributes:
+      label: Purpose
+      description: State the outcome this issue must deliver.
+      placeholder: Recover, implement, validate, document, or migrate a bounded capability.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current evidence and state
+      description: Include relevant commits, PRs, test results, hardware observations, and dependencies.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+      description: List the bounded work authorized by this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Out of scope and safety constraints
+      description: Record prohibited actions, evidence boundaries, and work that requires separate approval.
+    validations:
+      required: true
+  - type: input
+    id: branch
+    attributes:
+      label: Planned branch
+      description: Use issue-<number>-<purpose> after the issue number is assigned, or a documented governance branch.
+      placeholder: issue-N-bounded-purpose
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Required artifacts and provenance
+      description: Identify code, documents, manifests, captures, hashes, or private evidence references to produce.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: List deterministic tests, hardware gates, security checks, and metadata validation.
+    validations:
+      required: true
+  - type: textarea
+    id: exit
+    attributes:
+      label: Exit criteria
+      description: Define observable conditions for completion and PR readiness.
+    validations:
+      required: true
+  - type: checkboxes
+    id: coordination
+    attributes:
+      label: Coordination acknowledgement
+      options:
+        - label: I will post START, CHECKPOINT or BLOCKER, and HANDOFF records to this issue.
+          required: true
+        - label: I will push all intended commits and update the draft PR before ending an agent turn.
+          required: true
+        - label: I will not rely on chat history as the only authoritative project record.
+          required: true
