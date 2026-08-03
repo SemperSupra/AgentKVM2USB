@@ -7,6 +7,7 @@ import json
 import re
 import threading
 from epiphan_firmware import parse_epiphan_text_edid, parse_fpga_bitstream, parse_fx3_image, summarize_edid
+from epiphan_config import parse_recovered_response, recovered_request_map
 from scripts.inspect_epiphan_firmware import inspect_payload
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
@@ -335,6 +336,26 @@ class TestEpiphanKVM_Enhanced:
             "scan_mode": "p",
             "is_signal_active": True,
             "label": "DVI 1920x1080p@59.94, VESA",
+        }
+
+    def test_recovered_config_request_map_is_machine_consumable(self):
+        requests = recovered_request_map(include_writes=True)
+        by_name = {request["name"]: request for request in requests}
+
+        assert by_name["input_status"]["request_hex"] == "0xb2"
+        assert by_name["input_status"]["bmRequestType_hex"] == "0xc0"
+        assert by_name["input_status"]["risk"] == "read_only"
+        assert by_name["write_device_flags"]["request_hex"] == "0xe3"
+        assert by_name["write_device_flags"]["risk"] == "device_write"
+        assert by_name["update_initiate"]["risk"] == "firmware_write"
+
+    def test_parse_recovered_config_response_dispatches_to_sdk_parsers(self):
+        assert parse_recovered_response("device_flags", [0x16]) == {
+            "raw": 0x16,
+            "preserve_aspect_ratio": True,
+            "performance_mode": True,
+            "audio_selector_multichannel": True,
+            "unknown_bits": 0,
         }
 
     def test_parse_and_build_config_flags(self):

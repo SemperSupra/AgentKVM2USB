@@ -144,6 +144,10 @@ payloads: `parse_config_input_status()`, `parse_config_flags()`,
 `build_config_user_mode()`. It intentionally does not issue MI_00 USB control
 requests yet.
 
+`epiphan_config.py` and `scripts/inspect_epiphan_config.py` expose the recovered
+MI_00 request map and payload parser dispatch in machine-consumable form. Write
+and update requests are represented as metadata only.
+
 Recovered update transfer behavior:
 
 | Step | Request | Direction | Details |

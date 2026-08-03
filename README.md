@@ -86,6 +86,8 @@ sdk.close()
 - `scripts/`: Local portable-build and GitHub Release scripts.
 - `scripts/inspect_epiphan_firmware.py`: Offline parser for Epiphan `.fw`,
   FX3 `.img`, FPGA `.bin`, EDID text dumps, and package metadata.
+- `scripts/inspect_epiphan_config.py`: Offline recovered MI_00 request map and
+  config-payload parser.
 
 ## Testing
 Run the comprehensive test suite to verify your setup:
