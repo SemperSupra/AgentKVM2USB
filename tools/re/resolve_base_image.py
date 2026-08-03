@@ -3,11 +3,18 @@
 
 The digest is used as a recorded build input for the runner image (passed to
 docker build via PYTHON_BASE_IMAGE). Resolution is automated so the digest is
-never hard-coded by hand. Provenance records the source repository, requested
-tag, resolved digest, architecture, and retrieval timestamp.
+never hard-coded by hand, and the requested tag is refreshed on every call so a
+stale local cache is never mistaken for the current registry state.
 
-All Docker invocations go through the selected runtime adapter so the pinned
-context/distribution is used.
+The requested tag is explicitly pulled through the selected runtime adapter
+(and its recorded Docker Desktop context) before inspection. The RepoDigest
+matching the requested repository is selected rather than blindly taking the
+first entry. Provenance records the requested tag, the previously locked
+digest, the newly resolved digest, whether the remote tag changed, the
+architecture and OS, the resolution method, and the retrieval timestamp.
+
+All Docker invocations go through the selected runtime adapter, which also
+fails closed if the recorded Docker Desktop context drifted.
 """
 
 from __future__ import annotations
@@ -18,10 +25,37 @@ import json
 import os
 import pathlib
 import sys
-from typing import Any
+from typing import Any, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from re_runtime import Adapter, read_runtime_json  # noqa: E402
+
+
+def _repository_of(image: str) -> str:
+    """Return the repository portion of a tag (e.g. ``python`` for
+    ``python:3.12-slim-bookworm``), ignoring any registry host."""
+    repo = image.split("/")[-1]
+    return repo.split(":")[0]
+
+
+def _select_matching_repo_digest(repo_digests: List[str], repository: str) -> Optional[str]:
+    """Select the RepoDigest whose repository matches the requested one rather
+    than blindly returning the first entry (which could belong to another tag
+    aliased onto the same image)."""
+    for entry in repo_digests:
+        if entry.startswith(repository + "@") or entry.split("@", 1)[0].rstrip("/") == repository:
+            return entry
+    return None
+
+
+def read_previous_lock(output: pathlib.Path) -> Optional[dict[str, Any]]:
+    if not output.is_file():
+        return None
+    try:
+        with open(output, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (ValueError, OSError):
+        return None
 
 
 def resolve_base_image(
@@ -30,28 +64,42 @@ def resolve_base_image(
     image: str,
     output: pathlib.Path,
 ) -> dict[str, Any]:
+    previous = read_previous_lock(output)
+    previous_digest = (previous or {}).get("resolved_digest")
+
+    # Refresh: explicitly pull the requested tag on every call so a cached stale
+    # tag is not treated as the current registry state.
+    pulled = adapter.run(adapter.docker(["pull", image]), capture=True)
+    if pulled.returncode != 0:
+        raise RuntimeError(
+            f"docker pull {image} failed: {pulled.stderr.strip()[:200] or pulled.stdout.strip()[:200]}"
+        )
+
     result = adapter.run(adapter.docker(["image", "inspect", image]), capture=True)
     if result.returncode != 0:
-        # Pull the requested tag first so the digest reflects the current tag.
-        pulled = adapter.run(adapter.docker(["pull", image]), capture=False)
-        if pulled.returncode != 0:
-            raise RuntimeError(f"docker pull {image} failed: {pulled.stderr.strip()[:200]}")
-        result = adapter.run(adapter.docker(["image", "inspect", image]), capture=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"docker image inspect {image} failed: {result.stderr.strip()[:200]}")
+        raise RuntimeError(f"docker image inspect {image} failed: {result.stderr.strip()[:200]}")
     data = json.loads(result.stdout)[0]
+
+    repository = _repository_of(image)
     repo_digests = data.get("RepoDigests") or []
-    if not repo_digests:
-        raise RuntimeError(f"no RepoDigests recorded for {image}")
-    digest = repo_digests[0]
+    digest = _select_matching_repo_digest(repo_digests, repository)
+    if not digest:
+        raise RuntimeError(
+            f"no RepoDigest matching repository {repository!r} for {image}; got {repo_digests}"
+        )
+
+    remote_changed = previous_digest is not None and previous_digest != digest
     record = {
-        "schema_version": 1,
-        "source_repository": digest.split("@", 1)[0],
+        "schema_version": 2,
+        "source_repository": repository,
         "requested_tag": image,
+        "previously_locked_digest": previous_digest,
         "resolved_digest": digest,
+        "remote_tag_changed": remote_changed,
         "architecture": data.get("Architecture"),
         "os": data.get("Os"),
         "image_id": data.get("Id"),
+        "resolution_method": "docker pull <tag> + inspect, RepoDigest matched to requested repository",
         "retrieved_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +121,12 @@ def main() -> int:
     record = resolve_base_image(adapter=adapter, image=args.image, output=args.output)
     # Print the immutable reference so the bootstrap can set PYTHON_BASE_IMAGE.
     print(record["resolved_digest"])
+    if record.get("remote_tag_changed"):
+        print(
+            f"INFO: base tag {args.image} changed from {record['previously_locked_digest']} "
+            f"to {record['resolved_digest']}",
+            file=sys.stderr,
+        )
     return 0
 
 

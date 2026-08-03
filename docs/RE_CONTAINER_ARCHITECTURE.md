@@ -76,39 +76,62 @@ uninstall — a runtime never switches silently mid-run.
 - A Docker Desktop that is installed but stopped may be started through
   `docker desktop start` with bounded polling unless `-NoStartDockerDesktop` is
   passed. Docker Desktop and Docker Engine are never installed automatically.
+- A context is accepted as Docker Desktop only when its endpoint is positively
+  attributable to Docker Desktop (the Docker Desktop Linux named-pipe
+  endpoint). A context merely named `desktop-linux` with a custom or remote
+  endpoint is rejected. Every adapter-backed Docker/Compose operation
+  re-verifies the recorded context (exists, still Desktop-attributable, still
+  resolves to the recorded endpoint, still reports a Linux daemon) and fails
+  closed on drift, including inside `resolve_base_image.py` and
+  `write_image_lock.py`. Verification never recurses (it uses the raw runner).
 
 ## Reproducible build inputs
 
-- The official Python base image (`python:3.12-slim-bookworm`) is resolved to an
-  immutable digest before the runner build; the digest is recorded in
-  `.work/re/base-image.lock.json` (source repository, requested tag, resolved
-  digest, architecture, retrieval timestamp) and passed to the build as
+- The official Python base image (`python:3.12-slim-bookworm`) is pulled and
+  inspected on every bootstrap refresh through the selected adapter/context, so
+  a stale local cache is never treated as the current registry state. The
+  RepoDigest matching the requested repository is selected (not the first
+  entry). `.work/re/base-image.lock.json` records the requested tag, the
+  previously locked digest, the newly resolved digest, whether the remote tag
+  changed, architecture/OS, resolution method, and retrieval timestamp. The
+  resolved digest is passed to the build as
   `PYTHON_BASE_IMAGE=python@sha256:<digest>`.
 - Python dependencies are hash-locked: `containers/re-runner/requirements.in` is
   the human-maintained input, and the generated
   `containers/re-runner/requirements.lock.txt` (pip-compile `--generate-hashes`)
   is installed with `--require-hashes`.
 - Debian package versions are captured in the generated CycloneDX/SPDX SBOMs.
-- All pulled images use versioned publisher tags and are resolved to immutable
-  digests; the exact requested tag and resolved digest are recorded in
-  `.work/re/images.lock.json`, whose `runtime` block embeds the selected runtime,
-  context/distribution, endpoint, client/server versions, server OS, Compose
-  version, the SHA-256 of `.work/re/runtime.json`, and both the runtime-selection
-  and image-lock timestamps.
+- All pulled images use versioned publisher tags (no `:latest` fallback) and are
+  resolved to immutable digests; the exact requested tag and resolved digest are
+  recorded in `.work/re/images.lock.json`, whose `runtime` block embeds the
+  selected runtime, context/distribution, endpoint, client/server versions,
+  server OS, Compose version, the SHA-256 of `.work/re/runtime.json`, and both
+  the runtime-selection and image-lock timestamps.
 
 ## Vulnerability triage
 
-`tools/re/summarize_trivy.py` produces a sanitized JSON and Markdown triage of
-every CRITICAL and HIGH finding from the offline Trivy scan (the full JSON is
-preserved under ignored `.work/re/output`). The acceptance gate
-(`--gate`) fails when any CRITICAL finding has a vendor-provided fixed version
-available; unfixed CRITICAL findings are documented individually, and HIGH
-findings are aggregated by package and remediation status. The triage records
-advisory ID, severity, package/ecosystem, installed/fixed version, fixed or
-unfixed status, dependency path / source layer when available, presence in the
-final runtime image, package purpose, and an exposure note for the hardened
-execution model. It never claims that runtime hardening eliminates an underlying
-vulnerability.
+`tools/re/summarize_trivy.py` produces a sanitized JSON and Markdown triage with
+an **individual record for every CRITICAL and HIGH advisory** (package-level HIGH
+aggregation is an additional view, never a replacement). The full Trivy JSON is
+preserved only under ignored `.work/re/output`.
+
+Each record includes advisory/CVE ID, severity, package and ecosystem, installed
+and fixed version, fixed/unfixed status, Trivy vendor status and data source
+when available, source layer, dependency path, presence in the final runtime
+image, package purpose, and a **package-specific reachability/exposure
+assessment** — base/runtime libraries (zlib, glib, SQLite, Perl, libxml2, …) are
+assessed as exercised at container startup or ordinary analysis, not only while
+processing mounted evidence.
+
+Every remaining unfixed CRITICAL carries an explicit decision record
+(`remove`, `isolate`, `split`, or `retain`) with rationale, package necessity,
+whether affected functionality is exercised, mitigating isolation controls, and
+a review/expiry condition (e.g. a vendor fix being published).
+
+The acceptance gate (`--gate`) fails when any CRITICAL finding has a
+vendor-provided fixed version, fails when any unfixed CRITICAL lacks a complete
+decision record, and reports fixable HIGH findings separately. It never claims
+that runtime hardening eliminates an underlying vulnerability.
 
 ## Host boundary
 

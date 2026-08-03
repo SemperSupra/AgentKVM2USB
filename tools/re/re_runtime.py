@@ -131,10 +131,19 @@ def _context_endpoint(run: Runner, docker: str, name: str) -> str:
     return ""
 
 
+def _is_desktop_attributable_endpoint(endpoint: str) -> bool:
+    """Positive Docker Desktop ownership signal: the Docker Desktop Linux
+    named-pipe endpoint (dockerDesktopLinuxEngine). A context name alone is not
+    ownership evidence."""
+    return "dockerdesktoplinuxengine" in endpoint.lower()
+
+
 def _find_desktop_linux_context(run: Runner, docker: str) -> Optional[Dict[str, Any]]:
     """Find the Docker Desktop-owned Linux context without mutating the global
-    context. A context is Desktop-owned when its endpoint is the Desktop Linux
-    engine pipe (dockerDesktopLinuxEngine) or its name is ``desktop-linux``."""
+    context. A context is Desktop-owned only when its endpoint is positively
+    attributable to Docker Desktop (the Docker Desktop Linux named-pipe
+    endpoint). A context merely named ``desktop-linux`` with a custom or remote
+    endpoint is NOT accepted as Desktop ownership evidence."""
     names = _list_context_names(run, docker)
     active = _active_context_name(run, docker)
     ordered: List[str] = []
@@ -143,14 +152,13 @@ def _find_desktop_linux_context(run: Runner, docker: str) -> Optional[Dict[str, 
     ordered.extend(n for n in names if n not in ordered)
     for name in ordered:
         endpoint = _context_endpoint(run, docker, name)
-        is_desktop_endpoint = "dockerdesktoplinuxengine" in endpoint.lower()
-        is_desktop_name = name.lower() == "desktop-linux"
-        if is_desktop_endpoint or is_desktop_name:
+        if _is_desktop_attributable_endpoint(endpoint):
             return {
                 "name": name,
                 "endpoint": endpoint,
                 "active": name == active,
                 "active_context_name": active,
+                "ownership_signal": "docker-desktop-linux-named-pipe-endpoint",
             }
     return None
 
@@ -246,6 +254,7 @@ def probe_docker_desktop(
     details["endpoint"] = ctx["endpoint"]
     details["context_is_active"] = ctx["active"]
     details["active_context"] = ctx.get("active_context_name")
+    details["ownership_signal"] = ctx.get("ownership_signal")
 
     def _info_result() -> Tuple[bool, str]:
         """Return (ok, failure_reason). The daemon is queried through the
@@ -465,6 +474,7 @@ def _build_selected_metadata(selected: str, probes: Dict[str, Dict[str, Any]]) -
             "endpoint": d.get("endpoint"),
             "active_context": d.get("active_context"),
             "context_is_active": d.get("context_is_active"),
+            "ownership_signal": d.get("ownership_signal"),
             "desktop_status": d.get("desktop_status"),
             "desktop_identity": d.get("desktop_identity"),
             "desktop_installed_evidence": d.get("desktop_installed_evidence"),
@@ -717,23 +727,33 @@ class Adapter:
     def verify_context(self) -> ProcResult:
         """Fail closed before significant operations.
 
-        The recorded Desktop context must still exist, resolve to the recorded
-        endpoint, and report a Linux daemon. A missing/changed context, a
-        redirected endpoint, or Windows containers aborts with non-zero.
+        The recorded Desktop context must still exist, still be positively
+        attributable to Docker Desktop, resolve to the recorded endpoint, and
+        report a Linux daemon. A missing/changed context, a non-Desktop or
+        redirected endpoint, or Windows containers aborts with non-zero. Uses
+        ``self._run`` directly (never ``self.run``) so validation never
+        recurses into itself.
         """
         if self.runtime != "DockerDesktop":
             return ProcResult(0, "", "")
         if not self._context:
             return ProcResult(2, "", "no recorded Docker Desktop context; refusing to run")
         r = self._run(
-            ["docker", "--context", self._context, "context", "inspect", self._context,
-             "--format", "{{.Endpoints.docker.Host}}"],
+            ["docker", "context", "inspect", self._context, "--format", "{{.Endpoints.docker.Host}}"],
             capture=True,
         )
         if r.returncode != 0:
             return ProcResult(2, r.stdout, f"recorded Docker Desktop context {self._context!r} is missing")
         endpoint = r.stdout.strip()
-        if self._endpoint and endpoint and endpoint != self._endpoint:
+        if not endpoint:
+            return ProcResult(3, "", f"recorded Docker Desktop context {self._context!r} has no endpoint")
+        if not _is_desktop_attributable_endpoint(endpoint):
+            return ProcResult(
+                3, "",
+                f"recorded Docker Desktop context {self._context!r} endpoint {endpoint!r} "
+                f"is not positively attributable to Docker Desktop",
+            )
+        if self._endpoint and endpoint != self._endpoint:
             return ProcResult(
                 3, "",
                 f"recorded Docker Desktop context {self._context!r} endpoint changed "
@@ -779,6 +799,17 @@ class Adapter:
         ]
 
     def run(self, argv: Sequence[str], capture: bool = False, **kwargs: Any) -> ProcResult:
+        # Fail closed on every adapter-backed operation: the recorded Desktop
+        # context must still exist, still be Desktop-attributable, still resolve
+        # to the recorded endpoint, and still report a Linux daemon. This makes
+        # direct helper execution (resolve_base_image, write_image_lock, image
+        # inspect/tag, scans, builds, verification, cleanup) fail closed after
+        # endpoint drift without a separate call site. verify_context uses
+        # self._run directly, so this never recurses.
+        if self.runtime == "DockerDesktop":
+            check = self.verify_context()
+            if check.returncode != 0:
+                return ProcResult(check.returncode, check.stdout, check.stderr)
         return self._run(list(argv), capture=capture, **kwargs)
 
 

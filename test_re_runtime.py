@@ -430,8 +430,15 @@ def test_adapter_bash_wsl_quotes_args():
 
 
 def test_adapter_preserves_exit_codes():
-    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner({"docker --context desktop-linux info": fail(7, "boom")}), wsl_exe="C:\\fake\\wsl.exe")
-    result = adapter.run(adapter.docker(["info"]))
+    # verify_context succeeds (healthy Desktop context); the actual op fails with
+    # a distinct argv so exit code + stderr are preserved through the adapter.
+    handlers = {
+        "docker context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+        "docker --context desktop-linux info": ok(DESKTOP_INFO),
+        "docker --context desktop-linux version": fail(7, "boom"),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.run(adapter.docker(["version"]))
     assert result.returncode == 7
     assert result.stderr == "boom"
 
@@ -579,7 +586,7 @@ def test_global_context_changed_after_selection_uses_recorded_context():
 
 def test_recorded_context_removed_fails_closed():
     handlers = {
-        "docker --context desktop-linux context inspect desktop-linux --format": fail(1, "context not found"),
+        "docker context inspect desktop-linux --format": fail(1, "context not found"),
     }
     adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
     result = adapter.verify_context()
@@ -587,9 +594,23 @@ def test_recorded_context_removed_fails_closed():
     assert "missing" in result.stderr
 
 
-def test_recorded_context_endpoint_changed_fails_closed():
+def test_recorded_context_non_desktop_endpoint_fails_closed():
+    # A context whose endpoint is not positively attributable to Docker Desktop
+    # is rejected even though it is named desktop-linux.
     handlers = {
-        "docker --context desktop-linux context inspect desktop-linux --format": ok("npipe:////./pipe/something-else"),
+        "docker context inspect desktop-linux --format": ok("ssh://some.remote.host/engine"),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.verify_context()
+    assert result.returncode != 0
+    assert "not positively attributable" in result.stderr
+
+
+def test_recorded_context_endpoint_changed_fails_closed():
+    # A Desktop-attributable endpoint that is not the recorded one = drift.
+    drifted = "npipe:////./pipe/dockerDesktopLinuxEngine2"
+    handlers = {
+        "docker context inspect desktop-linux --format": ok(drifted),
     }
     adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
     result = adapter.verify_context()
@@ -599,13 +620,69 @@ def test_recorded_context_endpoint_changed_fails_closed():
 
 def test_recorded_context_windows_mode_fails_closed():
     handlers = {
-        "docker --context desktop-linux context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+        "docker context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
         "docker --context desktop-linux info": ok(DESKTOP_INFO_WINDOWS),
     }
     adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
     result = adapter.verify_context()
     assert result.returncode != 0
     assert "not Linux" in result.stderr
+
+
+def test_endpoint_drift_between_two_operations_fails_closed():
+    # Endpoint drift between two operations in one workflow: the first adapter
+    # op verifies healthy, the context is then redefined to a drifted endpoint,
+    # and the second op must fail closed.
+    state = {"drifted": False}
+
+    def handler(argv, **kwargs):
+        joined = " ".join(argv)
+        if "context inspect desktop-linux" in joined:
+            if state["drifted"]:
+                return ok("ssh://drifted.host/engine")
+            return ok(DESKTOP_CONTEXT_ENDPOINT)
+        if "--context desktop-linux info" in joined:
+            return ok(DESKTOP_INFO)
+        if "--context desktop-linux version" in joined:
+            return ok("Docker version 29.6.2")
+        raise AssertionError("no handler for argv: %r" % (argv,))
+
+    adapter = rt.Adapter(desktop_selection(), REPO, run=handler, wsl_exe="C:\\fake\\wsl.exe")
+    first = adapter.run(adapter.docker(["version"]))
+    assert first.returncode == 0
+    state["drifted"] = True
+    second = adapter.run(adapter.docker(["version"]))
+    assert second.returncode != 0
+    assert "not positively attributable" in second.stderr or "endpoint changed" in second.stderr
+
+
+def test_direct_helper_fails_closed_after_endpoint_drift():
+    # A standalone helper (write_image_lock/resolve_base_image style) uses
+    # adapter.run, which re-verifies the context and fails closed after drift
+    # before any Docker command reaches the daemon.
+    handlers = {
+        "docker context inspect desktop-linux --format": ok("ssh://drifted.host/engine"),
+        "docker --context desktop-linux info": ok(DESKTOP_INFO),
+        "docker --context desktop-linux image inspect": ok("[]"),
+    }
+    adapter = rt.Adapter(desktop_selection(), REPO, run=make_runner(handlers), wsl_exe="C:\\fake\\wsl.exe")
+    result = adapter.run(adapter.docker(["image", "inspect", "python:3.12-slim-bookworm"]))
+    assert result.returncode != 0
+    assert "not positively attributable" in result.stderr
+
+
+def test_fake_desktop_linux_name_with_remote_endpoint_rejected(which):
+    # A context named desktop-linux whose endpoint is a remote/custom engine is
+    # NOT accepted as Docker Desktop ownership evidence.
+    which({"docker": True, "wsl": True})
+    handlers = dict(desktop_handlers())
+    handlers["docker.exe context ls --format"] = ok("desktop-linux\n")
+    handlers["docker.exe context show"] = ok("desktop-linux")
+    handlers["docker.exe context inspect desktop-linux --format"] = ok("ssh://some.remote.host/engine")
+    handlers.update(wsl_handlers())
+    sel = select(requested="DockerDesktop", run=make_runner(handlers))
+    assert sel["selected_runtime"] is None
+    assert sel["probes"]["DockerDesktop"]["reason"] == "no_desktop_linux_context"
 
 
 def test_every_operation_includes_selected_context():
@@ -638,7 +715,11 @@ def test_image_lock_uses_adapter(tmp_path):
     )
     adapter = rt.Adapter(
         desktop_selection(), str(tmp_path),
-        run=make_runner({"docker --context desktop-linux image inspect": ok(inspected)}),
+        run=make_runner({
+            "docker context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+            "docker --context desktop-linux info": ok(DESKTOP_INFO),
+            "docker --context desktop-linux image inspect": ok(inspected),
+        }),
         wsl_exe="C:\\fake\\wsl.exe",
     )
     lock = wil.write_image_lock(
@@ -717,7 +798,12 @@ def test_base_image_digest_recorded(tmp_path):
     )
     adapter = rt.Adapter(
         desktop_selection(), str(tmp_path),
-        run=make_runner({"docker --context desktop-linux image inspect": ok(inspected)}),
+        run=make_runner({
+            "docker context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+            "docker --context desktop-linux info": ok(DESKTOP_INFO),
+            "docker --context desktop-linux pull python:3.12-slim-bookworm": ok(),
+            "docker --context desktop-linux image inspect": ok(inspected),
+        }),
         wsl_exe="C:\\fake\\wsl.exe",
     )
     out = tmp_path / "base-image.lock.json"
@@ -727,7 +813,66 @@ def test_base_image_digest_recorded(tmp_path):
     assert rec["requested_tag"] == "python:3.12-slim-bookworm"
     assert rec["architecture"] == "amd64"
     assert rec["retrieved_utc"]
+    assert rec["remote_tag_changed"] is False
     assert out.exists()
+
+
+def test_base_image_stale_local_tag_refreshed(tmp_path):
+    # A stale local tag must not be accepted: resolve pulls the tag and records
+    # the new remote digest plus the previously locked digest and change status.
+    import json as _json
+    import tools.re.resolve_base_image as rbi
+
+    out = tmp_path / "base-image.lock.json"
+
+    inspected = _json.dumps(
+        [{"RepoDigests": ["python@sha256:newdigest"], "Id": "sha256:new", "Architecture": "amd64", "Os": "linux"}]
+    )
+
+    def handler(argv, **kwargs):
+        joined = " ".join(argv)
+        if "context inspect desktop-linux" in joined:
+            return ok(DESKTOP_CONTEXT_ENDPOINT)
+        if "--context desktop-linux info" in joined:
+            return ok(DESKTOP_INFO)
+        if "pull python:3.12-slim-bookworm" in joined:
+            return ok()
+        if "--context desktop-linux image inspect" in joined:
+            return ok(inspected)
+        raise AssertionError("no handler for argv: %r" % (argv,))
+
+    adapter = rt.Adapter(desktop_selection(), str(tmp_path), run=handler, wsl_exe="C:\\fake\\wsl.exe")
+    # Seed a stale previous lock.
+    out.write_text(_json.dumps({"resolved_digest": "python@sha256:staleold"}), encoding="utf-8")
+    rec = rbi.resolve_base_image(adapter=adapter, image="python:3.12-slim-bookworm", output=out)
+    assert rec["previously_locked_digest"] == "python@sha256:staleold"
+    assert rec["resolved_digest"] == "python@sha256:newdigest"
+    assert rec["remote_tag_changed"] is True
+    assert rec["resolution_method"]
+
+
+def test_base_image_selects_matching_repo_digest(tmp_path):
+    # RepoDigests may contain entries for other repositories aliased onto the
+    # same image; the resolver must select the one matching the requested repo.
+    import json as _json
+    import tools.re.resolve_base_image as rbi
+
+    inspected = _json.dumps(
+        [{"RepoDigests": ["otherrepo@sha256:fff", "python@sha256:correct"],
+          "Id": "sha256:id", "Architecture": "amd64", "Os": "linux"}]
+    )
+    adapter = rt.Adapter(
+        desktop_selection(), str(tmp_path),
+        run=make_runner({
+            "docker context inspect desktop-linux --format": ok(DESKTOP_CONTEXT_ENDPOINT),
+            "docker --context desktop-linux info": ok(DESKTOP_INFO),
+            "docker --context desktop-linux pull python:3.12-slim-bookworm": ok(),
+            "docker --context desktop-linux image inspect": ok(inspected),
+        }),
+        wsl_exe="C:\\fake\\wsl.exe",
+    )
+    rec = rbi.resolve_base_image(adapter=adapter, image="python:3.12-slim-bookworm", output=tmp_path / "base-image.lock.json")
+    assert rec["resolved_digest"] == "python@sha256:correct"
 
 
 def test_python_hash_lock_enforced():
@@ -773,6 +918,8 @@ def test_trivy_summary_classifies_critical_and_high():
     assert crits["CVE-2023-1"]["fixed_status"] == "unfixed"
     assert crits["CVE-2023-1"]["ecosystem"] == "debian"
     assert crits["CVE-2023-1"]["source_layer"] == "sha256:layer1"
+    assert "decision" in crits["CVE-2023-1"]
+    assert crits["CVE-2023-1"]["decision"]["decision"] == "retain"
     assert crits["CVE-2024-1"]["fixed_status"] == "fixed"
     assert crits["CVE-2024-1"]["dependency_path"] == ["/usr/local/lib/angr"]
     assert "angr" in crits["CVE-2024-1"]["purpose"].lower()
@@ -785,6 +932,104 @@ def test_trivy_fixable_vs_unfixed_critical():
     # angr has a fixed version -> fixable -> gate fails.
     assert s["gate"]["zero_fixable_criticals"] is False
     assert s["gate"]["fixable_critical_ids"] == ["CVE-2024-1"]
+
+
+def test_trivy_every_high_advisory_survives_sanitization():
+    # Individual HIGH records must not be dropped by package aggregation.
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-H-1", "Severity": "HIGH", "PkgName": "libcurl3-gnutls",
+         "InstalledVersion": "7.88", "FixedVersion": "7.88.1", "Layer": {"DiffID": "sha256:l1"}},
+        {"VulnerabilityID": "CVE-H-2", "Severity": "HIGH", "PkgName": "libcurl3-gnutls",
+         "InstalledVersion": "7.88", "FixedVersion": "", "Layer": {"DiffID": "sha256:l2"}},
+        {"VulnerabilityID": "CVE-H-3", "Severity": "HIGH", "PkgName": "libexpat1",
+         "InstalledVersion": "2.5", "FixedVersion": "", "Layer": {"DiffID": "sha256:l3"}},
+    ]}]}
+    s = st.summarize(sample)
+    ids = {r["id"] for r in s["highs"]}
+    assert ids == {"CVE-H-1", "CVE-H-2", "CVE-H-3"}
+    # Aggregation is an additional view, not a replacement.
+    assert s["highs_by_package"][0]["findings"] == 2
+
+
+def test_trivy_high_per_finding_fixed_versions_and_paths_preserved():
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "lang-pkgs", "Type": "python", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-P-1", "Severity": "HIGH", "PkgName": "angr",
+         "InstalledVersion": "9.3.1", "FixedVersion": "9.3.2", "Paths": ["/usr/local/lib/angr"]},
+        {"VulnerabilityID": "CVE-P-2", "Severity": "HIGH", "PkgName": "angr",
+         "InstalledVersion": "9.3.1", "FixedVersion": "", "Paths": []},
+    ]}]}
+    s = st.summarize(sample)
+    by_id = {r["id"]: r for r in s["highs"]}
+    assert by_id["CVE-P-1"]["fixed_version"] == "9.3.2"
+    assert by_id["CVE-P-1"]["fixed_status"] == "fixed"
+    assert by_id["CVE-P-1"]["dependency_path"] == ["/usr/local/lib/angr"]
+    assert by_id["CVE-P-2"]["fixed_version"] is None
+    assert by_id["CVE-P-2"]["fixed_status"] == "unfixed"
+
+
+def test_trivy_generic_exposure_note_does_not_satisfy_decision_gate(tmp_path):
+    # A decision record that only carries a generic note must fail completeness.
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-X", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.0", "FixedVersion": ""}
+    ]}]}
+    s = st.summarize(sample, decisions={"CVE-X": {"decision": "retain", "rationale": "generic note"}})
+    assert s["gate"]["all_unfixed_critical_decisions_complete"] is False
+    assert s["gate"]["unfixed_critical_missing_decisions"] == ["CVE-X"]
+
+
+def test_trivy_missing_decisions_fail_gate(tmp_path):
+    import tools.re.summarize_trivy as st
+    # Override decisions to a missing/empty record for the unfixed critical.
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-Y", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.0", "FixedVersion": ""}
+    ]}]}
+    s = st.summarize(sample, decisions={"CVE-Y": {}})
+    assert s["gate"]["all_unfixed_critical_decisions_complete"] is False
+    assert s["gate"]["unfixed_critical_missing_decisions"] == ["CVE-Y"]
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    dec = tmp_path / "dec.json"
+    dec.write_text(json.dumps({"CVE-Y": {}}))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate",
+                  "--decisions", str(dec)])
+    assert rc == 1
+
+
+def test_trivy_complete_decisions_pass(tmp_path):
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-Z", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.0", "FixedVersion": ""}
+    ]}]}
+    s = st.summarize(sample)
+    assert s["gate"]["all_unfixed_critical_decisions_complete"] is True
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate"])
+    assert rc == 0
+
+
+def test_trivy_incomplete_file_decision_fails_gate(tmp_path):
+    import tools.re.summarize_trivy as st
+    sample = {"Results": [{"Class": "os-pkgs", "Type": "debian", "Vulnerabilities": [
+        {"VulnerabilityID": "CVE-Z", "Severity": "CRITICAL", "PkgName": "zlib1g",
+         "InstalledVersion": "1.0", "FixedVersion": ""}
+    ]}]}
+    decisions = {"CVE-Z": {"decision": "retain", "rationale": "only a note"}}
+    inp = tmp_path / "in.json"
+    inp.write_text(json.dumps(sample))
+    dec = tmp_path / "dec.json"
+    dec.write_text(json.dumps(decisions))
+    rc = st.main(["--input", str(inp), "--output", str(tmp_path / "out.json"),
+                  "--markdown", str(tmp_path / "out.md"), "--gate", "--decisions", str(dec)])
+    assert rc == 1
 
 
 def test_trivy_zero_fixable_critical_gate(tmp_path):
@@ -836,3 +1081,34 @@ def test_compose_no_docker_socket_and_hardening():
     assert "entrypoint: [\"/syft\"]" in text
     # runner build locks the Python base through a resolved immutable digest.
     assert "PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim-bookworm}" in text
+    # No mutable :latest image fallback remains in the compose defaults.
+    assert "image: ${SYFT_IMAGE:-anchore/syft:v1.19.0}" in text
+    assert "image: ${TRIVY_IMAGE:-aquasec/trivy:0.57.1}" in text
+
+
+def test_no_latest_image_fallback_in_toolchain():
+    root = os.path.dirname(__file__)
+    tracked = [
+        "compose.re.yml",
+        ".env.re.example",
+        "tools/re/bootstrap-re-containers.ps1",
+        "tools/re/bootstrap-re-containers.sh",
+        "tools/re/scan-re-image.ps1",
+        "tools/re/build-upstream-images.ps1",
+        "tools/re/re_runtime.py",
+        "tools/re/write_image_lock.py",
+        "tools/re/resolve_base_image.py",
+        "tools/re/summarize_trivy.py",
+        "tools/re/run-re-container.ps1",
+        "tools/re/verify-re-containers.ps1",
+        "tools/re/uninstall-re-containers.ps1",
+    ]
+    for rel in tracked:
+        text = open(os.path.join(root, rel), encoding="utf-8").read()
+        # A runtime/build image reference must never use :latest; versioned
+        # seeds are allowed because the digest is resolved before use.
+        lines = [
+            ln for ln in text.splitlines()
+            if ":latest" in ln and "angr/angr" not in ln and not ln.strip().startswith("#")
+        ]
+        assert not lines, f"{rel} contains :latest image reference: {lines}"
