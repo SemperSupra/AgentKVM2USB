@@ -68,7 +68,7 @@ class EpiphanKVM_SDK:
         }
     }
 
-    def __init__(self, target_name="KVM2USB 3.0"):
+    def __init__(self, target_name="KVM2USB 3.0", runtime_root=None):
         self.vid = 0x2b77
         self.pid = 0x3661
         self.kb_dev = None
@@ -84,6 +84,7 @@ class EpiphanKVM_SDK:
         self.last_action_text = ""
         self.last_action_expiry = 0
         self._lock = threading.Lock()
+        self.runtime_root = Path(runtime_root or os.environ.get("AGENTKVM2USB_SESSION_ROOT") or RUNTIME_SESSION_ROOT)
         
         self.session_started_at = datetime.datetime.now(datetime.timezone.utc)
         self.session_correlation_id = secrets.token_hex(4)
@@ -127,7 +128,7 @@ class EpiphanKVM_SDK:
     def _create_runtime_session_dir(self):
         """Creates a per-run output directory for logs, captures, and recordings."""
         timestamp = self.session_started_at.strftime("%Y%m%dT%H%M%SZ")
-        path = Path(RUNTIME_SESSION_ROOT) / f"{timestamp}-{self.session_correlation_id}"
+        path = self.runtime_root / f"{timestamp}-{self.session_correlation_id}"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -1029,7 +1030,7 @@ class EpiphanKVM_SDK:
         now = time.time()
         cutoff = now - (days * 86400)
         
-        root = Path(RUNTIME_SESSION_ROOT)
+        root = self.runtime_root
         if not root.exists():
             return 0
 

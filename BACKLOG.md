@@ -43,6 +43,6 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 ## Testability and Repository Hygiene
 - [ ] **Structured Hardware Probe:** Keep expanding the script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, frame statistics, and sample capture path.
 - [x] **Structured Macro Results:** Return parse/runtime errors from `run_macro()` instead of only printing them.
-- [ ] **Configurable Session Output Root:** Allow lab automation to override the default `runtime_sessions/` root.
+- [x] **Configurable Session Output Root:** Lab automation can override the default `runtime_sessions/` root with `EpiphanKVM_SDK(runtime_root=...)`, `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
 - [ ] **Persistent Profile Store:** Decide whether non-secret user presets should remain per-run or be promoted to a user profile directory outside the repository.
 - [ ] **Clean Windows Smoke Test:** Validate the portable ZIP on a clean Windows 11 machine with no repository checkout.

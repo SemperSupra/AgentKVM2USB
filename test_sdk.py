@@ -750,6 +750,22 @@ class TestEpiphanKVM_Enhanced:
         assert os.path.exists(screenshot)
         assert os.path.exists(log_path)
 
+    def test_runtime_session_root_can_be_overridden(self, tmp_path):
+        sdk = EpiphanKVM_SDK(runtime_root=tmp_path)
+        try:
+            assert sdk.session_dir.parent == tmp_path
+            assert sdk.config_path.parent == sdk.session_dir
+        finally:
+            sdk.close()
+
+    def test_runtime_session_root_can_come_from_environment(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENTKVM2USB_SESSION_ROOT", str(tmp_path))
+        sdk = EpiphanKVM_SDK()
+        try:
+            assert sdk.session_dir.parent == tmp_path
+        finally:
+            sdk.close()
+
     # --- 3. PRESET & CONFIG PERSISTENCE ---
 
     def test_preset_saving_loading(self, sdk):

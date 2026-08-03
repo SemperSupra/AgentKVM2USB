@@ -138,6 +138,7 @@ Offscreen snapshot limitation: PySide6 in the local virtual environment reported
 - GUI recording stop controls now signal the SDK recording loop.
 - Generated media, SRT files, and session JSON logs are ignored by Git.
 - Runtime outputs and per-run mutable state are grouped under `runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/`.
+- Runtime output root can now be overridden with `EpiphanKVM_SDK(runtime_root=...)`, environment variable `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
 - Broad exception handling still exists in hardware-probing paths. Replace it gradually with narrow exceptions and structured diagnostics as hardware behavior is characterized.
 - The repository root `config.json` is treated as a packaged default seed. Per-run `config.json`, `user_presets.json`, logs, captures, recordings, and SRT files are written under the correlated runtime session directory.
 
@@ -156,6 +157,7 @@ Validated locally:
 - `.venv\Scripts\python.exe hardware_probe.py --wait-sec 1 --include-mi00 --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
 - `.venv\Scripts\python.exe scripts\capture_mi00_experiment.py --experiment-id mi00-readonly-smoke --operator codex --libusb-dll .work\epiphan-extracted\KvmAppWin64-0.99.27-20171125\KvmAppWin64-0.99.27-20171125\libusb-1.0.dll`
 - `.venv\Scripts\python.exe scripts\summarize_trace.py .work\experiments\mi00-readonly-smoke --pretty`
+- `.venv\Scripts\python.exe hardware_probe.py --wait-sec 0 --runtime-root .work\runtime-smoke`
 - `.venv\Scripts\python.exe -c "from epiphan_sdk import EpiphanKVM_SDK; ..."` read-only live status check, including firmware version `4.0.0.39896`
 - release script dry-run and release upload path
 - portable dependency installer in an extracted path containing spaces

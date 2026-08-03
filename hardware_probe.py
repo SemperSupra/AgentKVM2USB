@@ -61,6 +61,10 @@ def parse_args() -> argparse.Namespace:
         "--libusb-dll",
         help="Optional explicit libusb-1.0.dll path for --include-mi00.",
     )
+    parser.add_argument(
+        "--runtime-root",
+        help="Optional runtime session output root for captures/logs created by the SDK.",
+    )
     return parser.parse_args()
 
 
@@ -270,8 +274,9 @@ def probe(
     measure_sec: float,
     include_mi00: bool,
     libusb_dll: str | None,
+    runtime_root: str | None,
 ) -> dict:
-    sdk = EpiphanKVM_SDK()
+    sdk = EpiphanKVM_SDK(runtime_root=runtime_root)
     try:
         deadline = time.time() + max(wait_sec, 0)
         frame = None
@@ -326,6 +331,7 @@ def main() -> int:
                 args.measure_sec,
                 args.include_mi00,
                 args.libusb_dll,
+                args.runtime_root,
             ),
             indent=2,
         )

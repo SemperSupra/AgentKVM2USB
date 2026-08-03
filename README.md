@@ -137,6 +137,13 @@ To capture a replayable read-only MI_00 experiment under `.work/experiments/`:
 python scripts/capture_mi00_experiment.py --libusb-dll path\to\libusb-1.0.dll
 ```
 
+Runtime captures, logs, and per-run config can be redirected with either:
+
+```bash
+set AGENTKVM2USB_SESSION_ROOT=C:\KVM-Lab\Sessions
+python hardware_probe.py --runtime-root C:\KVM-Lab\Sessions
+```
+
 ## Contributing
 Please see `BACKLOG.md` for current development priorities. High-risk features such as firmware flashing are currently deferred to protect hardware safety.
 
