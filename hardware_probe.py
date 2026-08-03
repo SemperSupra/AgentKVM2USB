@@ -53,6 +53,8 @@ def probe(wait_sec: float, capture: bool, prefix: str) -> dict:
                 "touch": sdk.touch_dev is not None,
                 "system": sdk.sys_dev is not None,
             },
+            "hidDiscovery": sdk.hid_discovery.as_dict() if sdk.hid_discovery else None,
+            "hidDiagnostics": [diagnostic.__dict__ for diagnostic in sdk.hid_diagnostics],
             "currentCameraName": sdk.current_camera_name,
             "cameras": [
                 {"index": index, "name": name}
