@@ -1,0 +1,42 @@
+# Public acquisition checklist for vendor and component documents.
+# Store restricted PDFs or downloaded copies in the private evidence vault.
+infineon_cypress:
+  - CYUSB3014 data sheet
+  - FX3 Technical Reference Manual
+  - FX3 Programmer's Manual
+  - FX3 API Guide
+  - FX3 SDK release notes
+  - FX3 SDK troubleshooting guide
+  - GPIF II Designer documentation
+  - Boot and image-format documentation
+  - DMA architecture documentation
+  - UVC examples
+  - Slave FIFO and GPIF examples
+  - Control Center source
+  - Firmware download application source
+  - Archived SDK firmware-library releases
+amd_xilinx:
+  - UG380 Spartan-6 Configuration User Guide
+  - XC6SLX16 data sheet
+  - Exact package and pinout guide
+  - SelectIO guide
+  - Clocking resources guide
+  - Block RAM guide
+  - DSP48A1 guide
+  - Memory-controller guide
+  - ISE command-line guide
+  - XDL and XDLRC documentation
+  - Configuration PROM documentation
+  - JTAG and BSDL files
+  - SP601 reference design and schematics
+board_components:
+  - ISL98002CRZ data sheet and application notes
+  - ISSI DDR data sheet
+  - Clock generator data sheets
+  - EEPROM and flash data sheets
+  - Power-controller data sheets
+  - DVI and VGA receiver documentation after exact devices are identified
+  - Epiphan user manuals
+  - Archived KVM2USB applications
+  - Archived firmware update packages
+  - Legally available regulatory filings and board photographs
