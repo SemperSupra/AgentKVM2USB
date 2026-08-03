@@ -81,6 +81,7 @@ class EpiphanKVM_SDK:
         self.development_mode = development_mode
         self.hid_discovery = None
         self.hid_diagnostics = []
+        self.hid_connection_ready = False
         self.cap = None
         self.latest_frame = None
         self.current_camera_name = None
@@ -264,9 +265,10 @@ class EpiphanKVM_SDK:
             stable_path=self.hid_path,
             development_mode=self.development_mode,
         )
+        self.hid_discovery.connection_ready = False
         self.hid_diagnostics = list(self.hid_discovery.diagnostics)
         selected = self.hid_discovery.selected
-        if selected is None:
+        if selected is None or not self.hid_discovery.topology_valid:
             return
 
         handles = {
@@ -275,6 +277,7 @@ class EpiphanKVM_SDK:
             "absolute_pointer": "touch_dev",
             "system": "sys_dev",
         }
+        opened = []
         for role, record in selected.collections.items():
             try:
                 dev = hid.device()
@@ -285,10 +288,22 @@ class EpiphanKVM_SDK:
                     f"HID collection {role} could not be opened: {exc}",
                     device_id=selected.device_id,
                     role=role,
-                    path=record.path,
+                    path=record.path_text,
                 ))
-                continue
+                for opened_dev in opened:
+                    try:
+                        opened_dev.close()
+                    except Exception:
+                        pass
+                for handle_name in handles.values():
+                    setattr(self, handle_name, None)
+                return
             setattr(self, handles[role], dev)
+            opened.append(dev)
+
+        required_handles = (self.kb_dev, self.mouse_dev, self.touch_dev, self.sys_dev)
+        self.hid_connection_ready = all(handle is not None for handle in required_handles)
+        self.hid_discovery.connection_ready = self.hid_connection_ready
 
     def _auto_start_video(self, target_name):
         cameras = self.list_available_cameras()

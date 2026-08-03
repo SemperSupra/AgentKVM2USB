@@ -39,13 +39,16 @@ class DeviceProfile:
     profile_id: str
     identities: tuple[UsbIdentity, ...]
     collections: tuple[HidCollectionProfile, ...]
-    shared_identity: bool = False
+
+    def matching_identity(self, record: "HidInterfaceRecord") -> UsbIdentity | None:
+        return next((
+            identity
+            for identity in self.identities
+            if identity.vid == record.vendor_id and identity.pid == record.product_id
+        ), None)
 
     def identity_matches(self, record: "HidInterfaceRecord") -> bool:
-        return any(
-            identity.vid == record.vendor_id and identity.pid == record.product_id
-            for identity in self.identities
-        )
+        return self.matching_identity(record) is not None
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,8 @@ class HidInterfaceRecord:
     @property
     def stable_path(self) -> str:
         """Return the physical path with collection-specific suffix removed."""
-        return re.sub(r"&Col\d+", "", self.path_text, count=1, flags=re.IGNORECASE)
+        path = re.sub(r"&Col\d+", "", self.path_text, count=1, flags=re.IGNORECASE)
+        return re.sub(r"&\d+(?=#\{)", "", path, count=1)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +122,18 @@ class DiscoveryDiagnostic:
     path: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "device_id": self.device_id,
+            "role": self.role,
+            "path": self.path.decode("utf-8", errors="replace")
+            if isinstance(self.path, bytes)
+            else self.path,
+            "details": self.details,
+        }
+
 
 @dataclass
 class PhysicalKvmDevice:
@@ -132,25 +148,34 @@ class DiscoveryResult:
     devices: list[PhysicalKvmDevice]
     selected: PhysicalKvmDevice | None
     diagnostics: list[DiscoveryDiagnostic]
+    connection_ready: bool | None = None
 
     @property
-    def ok(self) -> bool:
-        return self.selected is not None and not any(
-            diagnostic.code in {
-                "missing_collection",
-                "duplicate_collection",
-                "inaccessible_collection",
-                "selection_required",
-                "shared_identity_disabled",
-            }
+    def topology_valid(self) -> bool:
+        if self.selected is None:
+            return False
+        fatal_codes = {
+            "missing_collection",
+            "duplicate_collection",
+            "inaccessible_collection",
+        }
+        return not any(
+            diagnostic.code in fatal_codes
+            and diagnostic.device_id == self.selected.device_id
             for diagnostic in self.diagnostics
         )
 
+    @property
+    def ok(self) -> bool:
+        return self.topology_valid
+
     def as_dict(self) -> dict[str, Any]:
         return {
-            "ok": self.ok,
+            "ok": self.ok if self.connection_ready is None else self.ok and self.connection_ready,
+            "topology_valid": self.topology_valid,
+            "connection_ready": self.connection_ready,
             "selected_device_id": self.selected.device_id if self.selected else None,
-            "diagnostics": [diagnostic.__dict__ for diagnostic in self.diagnostics],
+            "diagnostics": [diagnostic.as_dict() for diagnostic in self.diagnostics],
             "devices": [
                 {
                     "device_id": device.device_id,
@@ -179,9 +204,8 @@ EPIPHAN_KVM2USB3_PROFILE = DeviceProfile(
 
 
 def _device_id(record: HidInterfaceRecord) -> str:
-    if record.serial_number:
-        return f"{record.vendor_id:04x}:{record.product_id:04x}:serial:{record.serial_number}"
-    return f"{record.vendor_id:04x}:{record.product_id:04x}:path:{record.stable_path}"
+    serial = record.serial_number or "no-serial"
+    return f"{record.vendor_id:04x}:{record.product_id:04x}:serial:{serial}:path:{record.stable_path}"
 
 
 def discover_hid_devices(
@@ -200,17 +224,19 @@ def discover_hid_devices(
     grouped: dict[str, PhysicalKvmDevice] = {}
 
     for record in records:
-        profile = next(
-            (candidate for candidate in profiles if candidate.identity_matches(record)),
-            None,
-        )
-        if profile is None:
+        matched = next((
+            (candidate, candidate.matching_identity(record))
+            for candidate in profiles
+            if candidate.identity_matches(record)
+        ), None)
+        if matched is None:
             continue
-        if profile.shared_identity and not development_mode:
+        profile, identity = matched
+        if identity.shared and not development_mode:
             diagnostics.append(DiscoveryDiagnostic(
                 "shared_identity_disabled",
                 f"Shared development identity {record.vendor_id:04x}:{record.product_id:04x} requires development_mode.",
-                path=record.path_text,
+            path=record.path_text,
             ))
             continue
         device_id = _device_id(record)
@@ -275,6 +301,12 @@ def discover_hid_devices(
         )]
         if not candidates:
             diagnostics.append(DiscoveryDiagnostic("serial_not_found", f"No HID device has serial {serial!r}."))
+        elif len(candidates) > 1:
+            diagnostics.append(DiscoveryDiagnostic(
+                "serial_ambiguous",
+                f"Serial {serial!r} matches multiple physical HID devices; select by stable_path.",
+                details={"device_ids": [device.device_id for device in candidates]},
+            ))
     if stable_path is not None:
         candidates = [device for device in candidates if any(
             record.stable_path == stable_path or record.path_text == stable_path
@@ -291,4 +323,6 @@ def discover_hid_devices(
         selected = None
     else:
         selected = candidates[0] if len(candidates) == 1 else None
+    if serial is not None and len(candidates) != 1:
+        selected = None
     return DiscoveryResult(devices, selected, diagnostics)
