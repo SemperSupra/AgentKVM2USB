@@ -408,3 +408,24 @@ def test_project_status_does_not_refer_to_obsolete_work_as_active():
     # The status must name all three active workstream issues and their PRs.
     for issue, pr in (("#8", "#13"), ("#14", "#15"), ("#16", "#17")):
         assert issue in status and pr in status
+
+
+def test_closeout_prompt_registered_in_manifest():
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    prompts = manifest["project"]["canonical_prompts"]
+    assert prompts["issue16_review_closeout"] == "prompts/ISSUE16_REVIEW_CLOSEOUT.md"
+    # The registered closeout prompt must actually exist.
+    assert (ROOT / prompts["issue16_review_closeout"]).is_file()
+
+
+def test_project_status_no_longer_undergoing_correction():
+    status = (ROOT / "PROJECT_STATUS.md").read_text(encoding="utf-8")
+    # The #16 row must state corrections are complete and the PR is in final
+    # documentation validation/review, not still "undergoing correction".
+    assert "governance corrections complete" in status.lower()
+    assert "final documentation validation/review" in status.lower()
+    assert "undergoing the governance correction pass" not in status.lower()
+    # The validated implementation head 35efdff is recorded and readers are
+    # directed to PR #17 for the authoritative current head.
+    assert "35efdff" in status
+    assert "PR #17" in status and "authoritative current head" in status.lower()

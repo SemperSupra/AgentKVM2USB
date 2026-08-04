@@ -50,6 +50,7 @@
       "local_agent_kickoff": "prompts/LOCAL_AGENT_KICKOFF.md",
       "web_agent_review": "prompts/WEB_AGENT_REVIEW.md",
       "new_repository_bootstrap": "prompts/NEW_REPOSITORY_BOOTSTRAP.md",
+      "issue16_review_closeout": "prompts/ISSUE16_REVIEW_CLOSEOUT.md",
       "renderer": "scripts/render_agent_prompt.py"
     },
     "canonical_tools": {
