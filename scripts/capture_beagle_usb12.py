@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
 
@@ -44,6 +46,27 @@ TOKEN_PIDS = {"OUT", "IN", "SETUP"}
 
 def utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def hash_api_files(api_dir: Path) -> dict:
+    """Record the vendor API files and version that produced a capture.
+
+    Vendor binaries never enter Git or images; only their hashes and the API
+    version string are recorded with the JSONL evidence.
+    """
+    api_dir = Path(api_dir)
+    result: dict = {"api_dir": str(api_dir), "files": []}
+    for name in ("beagle_py.py", "beagle.dll", "beagle.so", "libbeagle.so"):
+        candidate = api_dir / name
+        if candidate.is_file():
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            result["files"].append(
+                {"name": name, "sha256": digest, "length": candidate.stat().st_size}
+            )
+    match = re.search(r"(?i)(v[\d.]+)", str(api_dir))
+    if match:
+        result["version"] = match.group(1).lower()
+    return result
 
 
 def load_beagle_api(api_dir: Path):
@@ -221,6 +244,7 @@ def capture_usb12(api_dir: Path, output: Path, port: int, max_events: int, max_s
             "latency_ms": latency_ms,
             "host_interface_high_speed": bool(bg.bg_host_ifce_speed(handle)),
             "enable_result": int(enable_result),
+            "vendor_api": hash_api_files(api_dir),
         }
         with output.open("w", encoding="utf-8") as out:
             out.write(json.dumps(metadata, sort_keys=True) + "\n")
