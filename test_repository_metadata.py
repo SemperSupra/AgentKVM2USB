@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+import subprocess
 
+import scripts.apply_repository_metadata as applier
 import scripts.render_agent_prompt as prompt_renderer
 import scripts.validate_repository_metadata as validator
 
@@ -118,3 +120,108 @@ def test_handoff_schema_requires_remote_coordination_identity():
     required = set(schema["required"])
     assert {"record_type", "actor", "repository", "issue", "branch", "base_sha", "head_sha"}.issubset(required)
     assert {"validation", "blockers", "next_step", "safety"}.issubset(required)
+
+
+def test_homepage_null_and_empty_are_equivalent():
+    # GitHub returns "" for no homepage; the manifest uses null. Both are the
+    # same "no homepage" state and must not be reported as drift.
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    remote = {
+        "nameWithOwner": "SemperSupra/AgentKVM2USB",
+        "description": manifest["repository"]["description"],
+        "homepageUrl": "",  # remote empty string
+        "repositoryTopics": [{"name": t} for t in manifest["repository"]["topics"]],
+        "defaultBranchRef": {"name": "main"},
+        "visibility": "PUBLIC",
+        "isArchived": False,
+    }
+    errors = []
+    warnings = []
+    validator.validate_remote(manifest, remote, errors, warnings)
+    assert not errors, errors
+    # Normalizers agree on the None/"" state.
+    assert validator._homepage_equivalent(None) == validator._homepage_equivalent("")
+    assert applier.homepage_equivalent(None) == applier.homepage_equivalent("")
+
+
+def test_apply_refuses_visibility_drift(tmp_path, monkeypatch):
+    import subprocess as _sp
+
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    repo_view = _sp.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps({
+            "nameWithOwner": "SemperSupra/AgentKVM2USB",
+            "description": manifest["repository"]["description"],
+            "homepageUrl": "",
+            "repositoryTopics": [{"name": t} for t in manifest["repository"]["topics"]],
+            "defaultBranchRef": {"name": "main"},
+            "visibility": "PRIVATE",  # drift: manifest says public
+            "isArchived": False,
+        }),
+        stderr="",
+    )
+    monkeypatch.setattr(applier.shutil, "which", lambda name: "gh" if name == "gh" else None)
+    monkeypatch.setattr(applier, "run", lambda argv, cwd: repo_view)
+    # Apply must fail closed and never call gh repo edit for visibility drift.
+    rc = applier.main(["--root", str(ROOT), "--apply"])
+    assert rc == 3
+
+
+def test_apply_refuses_archived_drift(tmp_path, monkeypatch):
+    import subprocess as _sp
+
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    repo_view = _sp.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps({
+            "nameWithOwner": "SemperSupra/AgentKVM2USB",
+            "description": manifest["repository"]["description"],
+            "homepageUrl": "",
+            "repositoryTopics": [{"name": t} for t in manifest["repository"]["topics"]],
+            "defaultBranchRef": {"name": "main"},
+            "visibility": "PUBLIC",
+            "isArchived": True,  # drift: manifest says not archived
+        }),
+        stderr="",
+    )
+    monkeypatch.setattr(applier.shutil, "which", lambda name: "gh" if name == "gh" else None)
+    monkeypatch.setattr(applier, "run", lambda argv, cwd: repo_view)
+    rc = applier.main(["--root", str(ROOT), "--apply"])
+    assert rc == 3
+
+
+def test_prompts_require_remote_reconstruction_and_handoff():
+    local = (ROOT / "prompts" / "LOCAL_AGENT_KICKOFF.md").read_text(encoding="utf-8")
+    web = (ROOT / "prompts" / "WEB_AGENT_REVIEW.md").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "prompts" / "NEW_REPOSITORY_BOOTSTRAP.md").read_text(encoding="utf-8")
+
+    # Startup must reconstruct the assignment from remote GitHub state and post START.
+    assert "remote GitHub repository is the authoritative" in local
+    assert "solely from remote GitHub state" in local
+    assert "Post a START record" in local
+    assert "do not rely on this prompt, prior chat" in local.lower()
+    assert "as authoritative" in local.lower()
+    # End of turn must require pushed commits, PR body sync, and a HANDOFF record.
+    assert "Push every intended commit" in local
+    assert "Update the draft PR body" in local
+    assert "HANDOFF" in local
+    # Web review must rely on current remote state, not pasted chat.
+    assert "only current remote GitHub state" in web
+    assert "Do not evaluate from pasted chat summaries" in web
+    # Bootstrap must require project-specific metadata, not generic copied text.
+    assert "project-specific—not generic copied" in bootstrap
+    assert "fail closed for visibility" in bootstrap
+
+
+def test_topics_are_relevant_and_non_generic():
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    topics = set(manifest["repository"]["topics"])
+    generic = {"awesome", "example", "demo", "test", "misc", "project"}
+    assert not (topics & generic), topics & generic
+    # Project-specific hardware/domain topics are present.
+    assert {"epiphan", "kvm", "hid", "uvc", "usb"}.issubset(topics)
+    for topic in topics:
+        assert topic.islower() and topic.replace("-", "").isalnum(), topic

@@ -37,6 +37,16 @@ def normalize_topics(value: Any) -> set[str]:
     return result
 
 
+def homepage_equivalent(value: Any) -> str | None:
+    """Normalize a homepage value: GitHub returns ``""`` for no homepage while
+    the manifest uses ``null``. Treat both as the same ``None`` state so the
+    apply tool does not repeatedly try to clear an already-empty homepage."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
@@ -82,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     if current.get("description") != expected.get("description"):
         edit_args += ["--description", str(expected.get("description") or "")]
         changes.append("description")
-    if current.get("homepageUrl") != expected.get("homepage"):
+    if homepage_equivalent(current.get("homepageUrl")) != homepage_equivalent(expected.get("homepage")):
         edit_args += ["--homepage", str(expected.get("homepage") or "")]
         changes.append("homepage")
     if current_default != expected.get("default_branch"):

@@ -137,17 +137,27 @@ def load_remote(root: Path, repository: str) -> tuple[dict[str, Any] | None, str
         return None, f"invalid gh JSON: {exc}"
 
 
+def _homepage_equivalent(value: Any) -> str | None:
+    """Normalize a homepage value: GitHub returns ``""`` for no homepage while
+    the manifest uses ``null``. Treat both as the same ``None`` state so an empty
+    remote homepage is not reported as drift."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def validate_remote(manifest: dict[str, Any], remote: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
     expected = manifest["repository"]
     comparisons = {
         "nameWithOwner": expected.get("name_with_owner"),
         "description": expected.get("description"),
-        "homepageUrl": expected.get("homepage"),
+        "homepageUrl": _homepage_equivalent(expected.get("homepage")),
         "visibility": str(expected.get("visibility") or "").upper(),
         "isArchived": expected.get("archived"),
     }
     for field, wanted in comparisons.items():
-        actual = remote.get(field)
+        actual = _homepage_equivalent(remote.get(field)) if field == "homepageUrl" else remote.get(field)
         if actual != wanted:
             errors.append(f"remote {field} drift: expected {wanted!r}, got {actual!r}")
 
