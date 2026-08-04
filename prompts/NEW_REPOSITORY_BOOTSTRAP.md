@@ -18,11 +18,12 @@ Create a canonical governance issue before implementation. On a bounded issue br
 - scripts/render_agent_prompt.py;
 - scripts/validate_repository_metadata.py;
 - scripts/apply_repository_metadata.py;
-- tests for required artifacts, branch discipline, prompt rendering, and metadata drift.
+- scripts/claim_preflight.py (remote branch claim/lease preflight);
+- tests for required artifacts, branch discipline, claim/lease lifecycle, prompt rendering, and metadata drift.
 
 Populate the metadata manifest from the actual project: repository name, purpose, description, topics, visibility, default branch, homepage, capabilities, exclusions, canonical documents, workstreams, related repositories, releases, and public/private evidence boundaries. Do not claim capabilities, packages, integrations, or support states that have not been verified.
 
-Open a draft PR against the default branch. Record START, CHECKPOINT, DECISION, BLOCKER, and HANDOFF in the canonical issue. Validate local files and authenticated remote metadata. Metadata application must require an explicit reviewed action and must fail closed for visibility, archive-state, or other high-risk changes.
+Open a draft PR against the default branch. Record START (with an exclusive claim: claim_id, expected head, lease expiry), CHECKPOINT, DECISION, BLOCKER, and HANDOFF (releasing or transferring the claim) in the canonical issue. Require claim preflight before work and before every push, and use normal non-force pushes. Validate local files and authenticated remote metadata. Metadata application must require an explicit reviewed action and must fail closed for visibility, archive-state, or other high-risk changes.
 
 The exit gate is reached only when a new terminal or web agent can start with the repository URL and canonical issue number, recover the entire assignment from GitHub, and continue without prior chat history or unpushed local files.
 ```

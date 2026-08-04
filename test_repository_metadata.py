@@ -1,13 +1,37 @@
+import datetime as dt
 import json
 from pathlib import Path
 import subprocess
 
 import scripts.apply_repository_metadata as applier
+import scripts.claim_preflight as preflight
 import scripts.render_agent_prompt as prompt_renderer
 import scripts.validate_repository_metadata as validator
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def _base_claim(**overrides):
+    claim = {
+        "claim_id": "claim-1",
+        "claim_state": "active",
+        "actor": {"name": "test-agent", "environment": "test"},
+        "repository": "SemperSupra/AgentKVM2USB",
+        "issue": 16,
+        "branch": "issue-16-agent-coordination-governance",
+        "pull_request": 17,
+        "expected_remote_head": "7b60c6c1c67f9b1a147d07bd25f3bdf40cce2f17",
+        "claimed_at_utc": "2026-08-04T01:00:00+00:00",
+        "lease_expires_utc": "2026-08-04T05:00:00+00:00",
+        "assigned_slice": "test slice",
+    }
+    claim.update(overrides)
+    return claim
+
+
+def _now():
+    return dt.datetime(2026, 8, 4, 2, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def test_metadata_manifest_is_project_specific_and_complete():
@@ -44,6 +68,7 @@ def test_required_coordination_artifacts_exist():
         "scripts/render_agent_prompt.py",
         "scripts/validate_repository_metadata.py",
         "scripts/apply_repository_metadata.py",
+        "scripts/claim_preflight.py",
     )
     for rel in required:
         assert (ROOT / rel).is_file(), rel
@@ -225,3 +250,161 @@ def test_topics_are_relevant_and_non_generic():
     assert {"epiphan", "kvm", "hid", "uvc", "usb"}.issubset(topics)
     for topic in topics:
         assert topic.islower() and topic.replace("-", "").isalnum(), topic
+
+
+# --------------------------------------------------------------------------- claim/lease protocol
+
+
+def test_new_valid_claim_is_active():
+    claim = _base_claim()
+    assert preflight.validate_claim_identity(claim) == []
+    assert preflight.claim_is_active(claim, _now()) is True
+    assert preflight.preflight_before_work(existing_claims=[], branch=claim["branch"], now_utc=_now())["allowed"] is True
+
+
+def test_renewal_uses_same_claim_id_and_extends_expiry():
+    claim = _base_claim()
+    new_expiry = preflight.renewal_expiry(claim, now_utc=_now())
+    renewed = dict(claim, claim_state="renewed", lease_expires_utc=new_expiry)
+    # Same claim_id; expiry extended past the original.
+    assert renewed["claim_id"] == claim["claim_id"]
+    assert dt.datetime.fromisoformat(new_expiry) > dt.datetime.fromisoformat(claim["lease_expires_utc"])
+    assert preflight.claim_is_active(renewed, _now()) is True
+
+
+def test_explicit_release_is_not_active():
+    claim = dict(_base_claim(), claim_state="released")
+    assert preflight.claim_is_active(claim, _now()) is False
+
+
+def test_explicit_transfer_is_not_active_for_old_actor():
+    claim = dict(_base_claim(), claim_state="transferred", actor={"name": "next-agent", "environment": "other"})
+    assert preflight.claim_is_active(claim, _now()) is False
+
+
+def test_expired_claim_permits_new_owner():
+    expired = dict(_base_claim(), lease_expires_utc="2026-08-04T00:30:00+00:00")
+    assert preflight.claim_is_active(expired, _now()) is False
+    result = preflight.preflight_before_work(existing_claims=[expired], branch=expired["branch"], now_utc=_now())
+    assert result["allowed"] is True
+
+
+def test_unexpired_conflicting_claim_fails():
+    active = _base_claim()
+    result = preflight.preflight_before_work(existing_claims=[active], branch=active["branch"], now_utc=_now())
+    assert result["allowed"] is False
+    assert "unexpired claim" in result["reason"]
+
+
+def test_changed_remote_head_fails_before_push():
+    claim = _base_claim()
+    result = preflight.preflight_before_push(
+        claim=claim,
+        actual_remote_head="deadbeef0123456789abcdef0123456789abcdef",
+        expected_remote_head=claim["expected_remote_head"],
+        now_utc=_now(),
+    )
+    assert result["allowed"] is False
+    assert any("head changed unexpectedly" in e for e in result["errors"])
+
+
+def test_missing_claim_identity_or_expiry_fails_schema():
+    errors = preflight.validate_claim_identity({})
+    assert any("missing required claim field" in e for e in errors)
+    incomplete = _base_claim(lease_expires_utc="")
+    errors2 = preflight.validate_claim_identity(incomplete)
+    assert any("lease_expires_utc must be a valid ISO-8601" in e for e in errors2)
+
+
+def test_indefinite_claims_rejected():
+    # A claim without an expiry, or one far in the future beyond the ceiling,
+    # must be rejected.
+    no_expiry = _base_claim(lease_expires_utc=None)
+    errors = preflight.validate_claim_identity(no_expiry)
+    assert any("lease_expires_utc must be a valid ISO-8601" in e for e in errors)
+    far_future = _base_claim(lease_expires_utc="2099-01-01T00:00:00+00:00")
+    errors2 = preflight.validate_claim_identity(far_future)
+    assert any("ceiling" in e for e in errors2)
+
+
+def test_worktree_path_is_optional_and_non_authoritative():
+    claim = preflight.build_claim(
+        claim_id="c-1", actor="agent-a", repository="SemperSupra/AgentKVM2USB",
+        issue=16, branch="issue-16-agent-coordination-governance", pull_request=17,
+        expected_remote_head="7b60c6c1c67f9b1a147d07bd25f3bdf40cce2f17",
+        claimed_at_utc="2026-08-04T01:00:00+00:00",
+        lease_expires_utc="2026-08-04T05:00:00+00:00",
+        assigned_slice="slice", worktree_path=r"C:\some\machine\local\path",
+    )
+    assert claim["worktree_path"]["authoritative"] is False
+    # A claim without a worktree path is fully valid.
+    no_path = preflight.build_claim(
+        claim_id="c-2", actor="agent-a", repository="SemperSupra/AgentKVM2USB",
+        issue=16, branch="issue-16-agent-coordination-governance", pull_request=17,
+        expected_remote_head="7b60c6c1c67f9b1a147d07bd25f3bdf40cce2f17",
+        claimed_at_utc="2026-08-04T01:00:00+00:00",
+        lease_expires_utc="2026-08-04T05:00:00+00:00",
+        assigned_slice="slice",
+    )
+    assert "worktree_path" not in no_path
+    assert preflight.validate_claim_identity(no_path) == []
+
+
+def test_handoff_schema_defines_claim_lease_fields():
+    schema = json.loads((ROOT / ".github" / "agent-handoff.schema.json").read_text(encoding="utf-8"))
+    claim = schema["properties"]["claim"]
+    assert claim["type"] == "object"
+    assert {"claim_id", "claim_state", "expected_remote_head", "claimed_at_utc", "lease_expires_utc"}.issubset(claim["required"])
+    assert "active" in claim["properties"]["claim_state"]["enum"]
+    assert "expired" in claim["properties"]["claim_state"]["enum"]
+    # A worktree path, if present, must be explicitly non-authoritative.
+    assert claim["properties"]["worktree_path"]["properties"]["authoritative"]["const"] is False
+
+
+def test_prompts_require_claim_checks_before_work_and_push():
+    local = (ROOT / "prompts" / "LOCAL_AGENT_KICKOFF.md").read_text(encoding="utf-8")
+    web = (ROOT / "prompts" / "WEB_AGENT_REVIEW.md").read_text(encoding="utf-8")
+    bootstrap = (ROOT / "prompts" / "NEW_REPOSITORY_BOOTSTRAP.md").read_text(encoding="utf-8")
+    # Before-work claim preflight and before-push remote-head check.
+    assert "claim preflight" in local.lower()
+    assert "fail closed if another actor holds an unexpired claim" in local.lower()
+    assert "before every push" in local.lower() and "non-force push" in local.lower()
+    assert "claim_id" in local.lower()
+    # Web review must evaluate the branch claim/lease state.
+    assert "latest valid claim" in web.lower() and "lease expiry" in web.lower()
+    # Bootstrap must include the claim helper and release/transfer semantics.
+    assert "scripts/claim_preflight.py" in bootstrap
+    assert "releasing or transferring the claim" in bootstrap.lower()
+
+
+def test_no_instruction_permits_force_push_or_hard_reset():
+    docs = (
+        (ROOT / "AGENTS.md").read_text(encoding="utf-8").lower(),
+        (ROOT / "docs" / "REMOTE_AGENT_COORDINATION.md").read_text(encoding="utf-8").lower(),
+        (ROOT / "prompts" / "LOCAL_AGENT_KICKOFF.md").read_text(encoding="utf-8").lower(),
+    )
+    joined = "\n".join(docs)
+    # The protocol forbids force-push of shared work; normal push is required.
+    assert "never force-push" in joined or "do not force-push" in joined
+    assert "non-force push" in joined
+    assert "hard reset" not in joined
+
+
+def test_project_status_mentions_registered_canonical_workstreams():
+    manifest = json.loads((ROOT / ".github" / "repository-metadata.json").read_text(encoding="utf-8"))
+    status = (ROOT / "PROJECT_STATUS.md").read_text(encoding="utf-8")
+    workstreams = manifest["project"]["canonical_workstreams"]
+    for role, issue in workstreams.items():
+        assert f"#{issue}" in status, f"PROJECT_STATUS.md must mention issue #{issue} ({role})"
+    # The status document must state it is a snapshot superseded by remote state.
+    assert "supersedes" in status.lower()
+    assert "last reviewed" in status.lower()
+
+
+def test_project_status_does_not_refer_to_obsolete_work_as_active():
+    status = (ROOT / "PROJECT_STATUS.md").read_text(encoding="utf-8")
+    # Issue #5 / PR #6 were the prior package-foundry work and are no longer active.
+    assert "**not** active work" in status
+    # The status must name all three active workstream issues and their PRs.
+    for issue, pr in (("#8", "#13"), ("#14", "#15"), ("#16", "#17")):
+        assert issue in status and pr in status

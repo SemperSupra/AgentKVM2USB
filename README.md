@@ -2,7 +2,7 @@
 
 AgentKVM2USB is a Python SDK for the Epiphan KVM2USB 3.0.
 
-It provides an interface for video capture (up to 1080p @ 60fps) and programmatic KVM control (keyboard, mouse, and touch injection), utilizing standard HID and UVC interfaces. It does not require the original Epiphan vendor drivers or SDK.
+It provides an interface for video capture (up to 1080p @ 60fps) and HID input development (keyboard, mouse, and touch report research), utilizing standard HID and UVC interfaces. Target-side HID forwarding and activation remain under investigation and are not yet demonstrated as end-to-end control. It does not require the original Epiphan vendor drivers or SDK.
 
 ## Key Features
 - **Unified SDK**: Control video and HID inputs via a single Python class.

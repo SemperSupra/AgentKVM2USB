@@ -9,6 +9,7 @@ Read AGENTS.md, PROJECT_STATUS.md, .github/repository-metadata.json, docs/REMOTE
 
 Determine:
 - the current work owner and branch;
+- the latest valid claim for the branch (claim_id, claim_state, expected_remote_head, lease expiry) and whether it is active, renewed, released, transferred, or expired;
 - the latest remote head and base;
 - the assigned bounded slice and exit gate;
 - implemented changes and exact validation evidence;
@@ -20,7 +21,7 @@ Do not evaluate from pasted chat summaries when remote evidence is available. Co
 
 Publish every material conclusion to GitHub. Use a PR review for code-specific findings and the canonical issue for decisions, blockers, ownership transfers, and the next bounded assignment. Do not leave the local terminal agent dependent on this chat.
 
-When assigning another terminal-agent turn, record a concise bounded slice in issue #{{ISSUE}} that includes branch/base/head, objectives, exclusions, validation, exit gate, safety constraints, and required START/CHECKPOINT/HANDOFF records. The next actor must be able to continue with only {{REPOSITORY}} and issue #{{ISSUE}}.
+When assigning another terminal-agent turn, record a concise bounded slice in issue #{{ISSUE}} that includes branch/base/head, objectives, exclusions, validation, exit gate, safety constraints, the claim/lease expectation, and required START/CHECKPOINT/HANDOFF records. The next actor must be able to continue with only {{REPOSITORY}} and issue #{{ISSUE}}.
 ```
 
 Generate a populated copy with:

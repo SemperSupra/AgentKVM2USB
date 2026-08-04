@@ -27,6 +27,42 @@
       "type": "string",
       "format": "date-time"
     },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Remote branch-ownership claim/lease. START establishes an exclusive claim; CHECKPOINT renews it; HANDOFF releases or transfers it. A claim is never indefinite.",
+      "required": [
+        "claim_id",
+        "claim_state",
+        "expected_remote_head",
+        "claimed_at_utc",
+        "lease_expires_utc"
+      ],
+      "properties": {
+        "claim_id": {"type": "string", "minLength": 1},
+        "claim_state": {
+          "type": "string",
+          "enum": ["active", "renewed", "released", "transferred", "expired"]
+        },
+        "expected_remote_head": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
+        "claimed_at_utc": {"type": "string", "format": "date-time"},
+        "lease_expires_utc": {"type": "string", "format": "date-time"},
+        "lease_duration_hours": {
+          "type": ["number", "null"],
+          "description": "Explicit lease duration; default 4 hours. Indefinite leases are rejected."
+        },
+        "worktree_path": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional machine-local diagnostic context only; never authoritative.",
+          "required": ["value", "authoritative"],
+          "properties": {
+            "value": {"type": "string", "minLength": 1},
+            "authoritative": {"type": "boolean", "const": false}
+          }
+        }
+      }
+    },
     "actor": {
       "type": "object",
       "additionalProperties": false,

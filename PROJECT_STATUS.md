@@ -1,19 +1,37 @@
 # AgentKVM2USB Project Status
 
-Last reviewed: 2026-08-02
+Last reviewed: 2026-08-04T02:00:00Z
 
-## Repository Triage
+> This is a concise snapshot. The current state of issues, pull requests, branches,
+> and their head SHAs on GitHub supersedes this document whenever they differ.
+> Agents and humans must read the canonical issues and linked PRs for authoritative
+> scope, decisions, blockers, and validation.
 
-- Active branch: `package-foundry/public-deployment-readiness`.
-- Base branch: `main`.
-- Open issue: `#5`, Windows Package Foundry public deployment readiness.
-- Open pull request: `#6`, draft, targeting `main` from `package-foundry/public-deployment-readiness`.
-- Stale remote branches observed after merged work: `origin/refactor/spartan-6-fx3-assumptions-8828302436159790485` and `origin/update-hardware-report-16011522587312263998`.
-- No GitHub Actions workflow exists in this repository.
+## Repository State
+
+- Integration branch: `main` @ `15223d035d0dfc4e0aa97e1c396103c160a928c2`.
+- Remote GitHub repository is the authoritative coordination surface; see
+  `docs/REMOTE_AGENT_COORDINATION.md` and `AGENTS.md`.
+- No GitHub Actions workflow exists in this repository (a path-filtered
+  governance CI workflow is a recommended follow-up).
+
+## Active Canonical Workstreams
+
+| Issue | Title | Branch | PR | Head SHA | State | Dependencies | Next bounded action |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #8 | Make the input path profile-driven across keyboard, relative mouse, pen, and touch | `issue-8-phase-b-keyboard` | #13 (draft) | `4cce290188705413d3e88686f4443cdda53db16c` | Phase B keyboard correctness implemented; awaiting integration review | Hardware HID/USB validation, #16 coordination protocol | Continue target-side HID forwarding/activation investigation; keep PR #13 isolated |
+| #14 | Recover the downstream HID forwarding and activation path | `issue-14-container-re-toolchain` | #15 (ready for review) | `6837a7a48fe20a9a154c320f70a44ff037a83632` | Container-first RE toolchain implemented and ready for integration review; **target-side HID forwarding remains unresolved** | #16 coordination protocol; Total Phase Linux Beagle API (operational follow-up) | Maintain PR #15 ready; unresolved target-side DATA/forwarding requires further hardware investigation |
+| #16 | Establish repository-native agent coordination and project metadata governance | `issue-16-agent-coordination-governance` | #17 (draft) | `7b60c6c1c67f9b1a147d07bd25f3bdf40cce2f17` | **Undergoing the governance correction pass** (claim/lease protocol, status correction, capability metadata correction) | None | Complete the PR #17 corrections, run full validation, and post HANDOFF |
+
+Issue #5 / PR #6 (Windows Package Foundry public deployment readiness) are
+**not** active work; the active repository work is tracked by issues #8, #14,
+and #16 and their PRs #13, #15, and #17 above.
 
 ## Current Artifact Model
 
-The public release artifact is a portable Windows ZIP, not a frozen executable. This keeps Python, PySide6, OpenCV, `hidapi`, `pygrabber`, DirectShow, UVC, and HID behavior visible and debuggable for humans and automation.
+The public release artifact is a portable Windows ZIP, not a frozen executable.
+This keeps Python, PySide6, OpenCV, `hidapi`, `pygrabber`, DirectShow, UVC, and
+HID behavior visible and debuggable for humans and automation.
 
 Release `v0.2.0` has these install assets:
 
@@ -28,68 +46,69 @@ Current SHA256:
 
 ## Hardware Validation
 
-Hardware validation was run on 2026-08-02 with the Epiphan KVM2USB connected to a powered-on Wyse 5070.
+Hardware validation was run on 2026-08-02 with the Epiphan KVM2USB connected to
+a powered-on Wyse 5070.
 
 Observed:
 
-- Device LED: blue, which is expected for the KVM2USB 3.0 USB 3.0 host link. Epiphan documents solid blue as USB 3.0 connection active and blinking blue as KVM App connected.
-- HID keyboard endpoint: connected.
-- HID mouse endpoint: connected.
-- HID touch endpoint: connected.
-- HID system endpoint: connected.
-- UVC camera list included `[KVM2USB 3.0] KVM2USB 3.0` at camera index 3.
+- Device LED: blue, which is expected for the KVM2USB 3.0 USB 3.0 host link.
+- HID keyboard, mouse, touch, and system endpoints: connected.
+- UVC camera list included `[KVM2USB 3.0] KVM2USB 3.0`.
 - OpenCV captured a `1080x1920` BGR frame from the device.
-- Captured frame was black.
-- `get_status()` reported `resolution: 0x0` and `is_signal_active: false`.
-
-Two KVM2USB 3.0 units showed the same result. Interpretation: USB/HID/UVC enumeration works on the host. The blue LED supports that the host USB 3.0 link is healthy. The target video signal path still needs follow-up because the camera stream is available but no active signal is reported by the system endpoint and the captured frame is black.
+- Later captures with a revised adapter chain showed the Wyse firmware screen
+  and `get_status()` reporting `1920x1080` active; HID usage `0x103` feature
+  report `3` returned bytes decoded as `1920x1080 active`.
+- **Target-side HID forwarding is unresolved**: an inline Beagle-12 capture
+  recorded `IN` polls and `NAK` handshakes on the target-facing interrupt
+  endpoint with `0` HID `DATA` packets. This is the core blocker tracked by
+  issue #14 and is not yet resolved.
 
 Current Wyse video path:
 
 ```text
 Wyse DisplayPort
 -> DP to HDMI adapter
--> HDMI cable
 -> HDMI to DVI adapter
 -> Epiphan KVM cable
 -> KVM2USB
 ```
 
-Leading diagnosis: the target video signal is not negotiating through this multi-adapter chain. Prefer a single active DisplayPort-to-DVI-D conversion.
+Leading diagnosis: the target video signal is not negotiating through this
+multi-adapter chain. Prefer a single active DisplayPort-to-DVI-D conversion.
 
 Likely adapter/cable choices:
 
-- StarTech `DP2DVIMM6BS`: active DP male to DVI-D male cable. Best physical fit for the Epiphan KVM cable's female DVI end.
-- StarTech `DP2DVIS`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
-- Cable Matters `102022`: active DP male to DVI-D female adapter. Requires a short DVI-D male-to-male cable.
-- Accell UltraAV `B087B-005B-2`: active DP to DVI-D single-link adapter. Confirm connector gender.
-- Club 3D `CAC-1010`: active DP to dual-link DVI-D. Confirm connector gender.
+- StarTech `DP2DVIMM6BS`: active DP male to DVI-D male cable.
+- StarTech `DP2DVIS`: active DP male to DVI-D female adapter.
+- Cable Matters `102022`: active DP male to DVI-D female adapter.
+- Accell UltraAV `B087B-005B-2`: active DP to DVI-D single-link adapter.
+- Club 3D `CAC-1010`: active DP to dual-link DVI-D.
 
-Avoid passive DP-to-DVI unless the Wyse port is known to support DP++, and avoid DP-to-HDMI plus HDMI-to-DVI chains.
-
-## UI/UX Review
-
-The GUI now uses the native Qt/platform style instead of forcing Fusion. Toolbar actions use standard platform icons and plain labels instead of emoji-heavy labels. The central no-signal/no-hardware view uses the platform palette and default font.
-
-Offscreen snapshot limitation: PySide6 in the local virtual environment reported a missing Qt font directory during offscreen screenshots, and text rendered as boxes in the offscreen snapshot. This appears to be an offscreen Qt/PySide packaging limitation, not an application stylesheet regression. Do not bundle fonts for this project unless a real packaged GUI environment demonstrates the same problem.
+Avoid passive DP-to-DVI unless the Wyse port is known to support DP++, and avoid
+DP-to-HDMI plus HDMI-to-DVI chains.
 
 ## Safety, Security, And Performance Notes
 
-- Firmware flashing, EDID writing, and raw USB control writes remain deferred high-risk work.
-- Macro coordinates are clamped to normalized `0.0` to `1.0` before HID touch reports are emitted.
-- The SDK key map now matches the documented macro key set.
-- GUI recording stop controls now signal the SDK recording loop.
+- Firmware flashing, EDID writing, and raw USB control writes remain deferred
+  high-risk work requiring explicit human approval and a hardware-safe plan.
+- Macro coordinates are clamped to normalized `0.0` to `1.0` before HID touch
+  reports are emitted.
 - Generated media, SRT files, and session JSON logs are ignored by Git.
-- Runtime outputs and per-run mutable state are grouped under `runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/`.
-- Broad exception handling still exists in hardware-probing paths. Replace it gradually with narrow exceptions and structured diagnostics as hardware behavior is characterized.
-- The repository root `config.json` is treated as a packaged default seed. Per-run `config.json`, `user_presets.json`, logs, captures, recordings, and SRT files are written under the correlated runtime session directory.
+- Runtime outputs and per-run mutable state are grouped under
+  `runtime_sessions/<YYYYMMDDTHHMMSSZ>-<correlation-id>/`.
+- The repository root `config.json` is a packaged default seed; per-run
+  `config.json`, `user_presets.json`, logs, captures, recordings, and SRT files
+  are written under the correlated runtime session directory.
+- Public repositories contain sanitized facts, independently written code,
+  manifests, hashes, references, and conclusions; restricted evidence belongs in
+  an approved private evidence repository.
 
 ## Test Status
 
 Validated locally:
 
 - `python -m compileall -q .`
-- `.venv\Scripts\python.exe -m pytest -v`
+- `.venv\Scripts\python.exe -m pytest -q`
 - `python -m json.tool .package-foundry\package.json`
 - `python scripts\build_portable.py`
 - `python hardware_probe.py --capture`
@@ -97,33 +116,8 @@ Validated locally:
 - portable dependency installer in an extracted path containing spaces
 - hardware HID/UVC enumeration and frame capture
 
-Current automated test coverage is useful for SDK processing, macro parsing, packaging scripts, and GUI structure. It does not fully cover live UVC signal quality, HID injection against a target OS, DirectShow camera permission failures, long-running recording behavior, or packaging on a clean Windows machine.
-
-## Phased Strategy
-
-Phase 1: Stabilize source and automation.
-
-- Keep PR `#6` focused on packaging readiness, testability, generated artifact hygiene, and docs.
-- Keep `hardware_probe.py` current as the machine-consumable hardware validation entry point.
-- Replace print-only macro errors with structured results so agents can consume failures.
-- Add a no-hardware CI-safe test mode for GUI and SDK startup.
-
-Phase 2: Validate hardware behavior.
-
-- Capture screenshots from the Wyse 5070 at BIOS, bootloader, Windows lock screen, and desktop states.
-- Compare UVC frames to `get_status()` resolution/signal reports.
-- Exercise keyboard, mouse, touch, and hotkey HID paths on a sacrificial target session.
-- Measure frame latency, frame rate, and recording stability over 10-minute and 60-minute runs.
-
-Phase 3: Improve operator and agent UX.
-
-- Make the runtime session root configurable for lab automation and packaged installs.
-- Add a visible device health panel with UVC, HID, signal, resolution, and recording states.
-- Add named macro storage with explicit dry-run/validate support.
-- Add structured JSON status and action output for automation.
-
-Phase 4: Package and deployment hardening.
-
-- Test the portable ZIP on a clean Windows 11 system.
-- Generate organization-controlled Scoop, Chocolatey, and local Winget metadata from Package Foundry.
-- Keep official Winget, Chocolatey Community, Scoop main/extras, and PortableApps publication disabled until explicitly approved.
+Current automated test coverage is useful for SDK processing, macro parsing,
+packaging scripts, and GUI structure. It does not fully cover live UVC signal
+quality, HID injection against a target OS, DirectShow camera permission
+failures, long-running recording behavior, or packaging on a clean Windows
+machine.

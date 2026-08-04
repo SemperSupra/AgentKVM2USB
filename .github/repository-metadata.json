@@ -3,7 +3,7 @@
   "repository": {
     "name_with_owner": "SemperSupra/AgentKVM2USB",
     "display_name": "AgentKVM2USB",
-    "description": "Open-source Python SDK and automation toolkit for Epiphan KVM2USB 3.0 video capture and HID keyboard, mouse, and touch control.",
+    "description": "Open-source Python SDK and research toolkit for Epiphan KVM2USB 3.0 video capture, HID input development, diagnostics, and automation.",
     "visibility": "public",
     "default_branch": "main",
     "archived": false,
@@ -51,6 +51,11 @@
       "web_agent_review": "prompts/WEB_AGENT_REVIEW.md",
       "new_repository_bootstrap": "prompts/NEW_REPOSITORY_BOOTSTRAP.md",
       "renderer": "scripts/render_agent_prompt.py"
+    },
+    "canonical_tools": {
+      "metadata_validator": "scripts/validate_repository_metadata.py",
+      "metadata_applier": "scripts/apply_repository_metadata.py",
+      "claim_preflight": "scripts/claim_preflight.py"
     },
     "canonical_workstreams": {
       "input_path": 8,

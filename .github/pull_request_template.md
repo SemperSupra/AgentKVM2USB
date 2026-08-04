@@ -41,9 +41,15 @@ Closes/Supports #
 - Base SHA:
 - Head SHA:
 - Canonical issue:
+- Claim ID:
+- Claim state (active/renewed/released/transferred):
+- Claim lease expiry (UTC):
 - START comment:
 - Latest CHECKPOINT/BLOCKER:
 - HANDOFF comment:
+
+Pre-push claim checks: remote branch re-fetched and verified to equal the
+claim's expected head before every push; normal non-force push used.
 
 ## Safety and evidence boundary
 

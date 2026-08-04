@@ -32,9 +32,9 @@ Before changing files, an agent must:
 2. read this file, `PROJECT_STATUS.md`, and `.github/repository-metadata.json`;
 3. read the canonical issue body and its latest comments;
 4. inspect linked and active pull requests, reviews, commits, and checks;
-5. confirm the assigned branch, base commit, scope, exit gate, safety boundary, and current owner;
+5. run remote branch-ownership claim preflight (see below) and confirm the assigned branch, base commit, scope, exit gate, safety boundary, and current owner;
 6. preserve unrelated local changes and avoid modifying another active worktree or PR;
-7. post a `START` record to the canonical issue before material work.
+7. post a `START` record with an exclusive claim to the canonical issue before material work.
 
 A local agent must be able to recover the complete assignment from the repository URL and canonical issue number without chat history.
 
@@ -49,6 +49,34 @@ A local agent must be able to recover the complete assignment from the repositor
 - Do not alter another active PR unless the canonical issue records an ownership transfer.
 - Open or update a draft PR before ending a local-agent turn when any reviewable change exists.
 - Keep PR titles and bodies synchronized with the current head, validation state, risks, and blockers.
+
+## Remote Branch Ownership: Claim and Lease Protocol
+
+`git worktree` prevents duplicate checkout only within one local repository. It does not prevent two different machines, separate clones, containers, or agents from working the same remote branch concurrently. Ownership is therefore enforced through an explicit remote claim/lease recorded in the canonical issue.
+
+- `START` establishes an exclusive claim on the branch. A claim must include: a unique `claim_id`, `claim_state`, actor identity and environment, repository, canonical issue, branch, pull request, `expected_remote_head`, `claimed_at_utc`, `lease_expires_utc`, and the assigned slice.
+- The default lease is four hours. A claim must never be indefinite; a lease beyond the absolute ceiling is rejected.
+- `CHECKPOINT` may renew the same claim by extending its explicit expiration.
+- `HANDOFF` must release the claim (`claim_state: released`) or transfer it to a named next actor (`claim_state: transferred`) with the exact branch and head SHA.
+- Supported states: `active`, `renewed`, `released`, `transferred`, `expired`.
+
+Before material work an agent must:
+
+1. fetch remote issue and branch state;
+2. identify the latest valid claim for the branch;
+3. fail closed if another actor holds an unexpired claim;
+4. verify that the remote branch still equals the claim's `expected_remote_head`.
+
+Before every push an agent must:
+
+1. fetch the remote branch again;
+2. compare the actual remote head to the claim's `expected_remote_head`;
+3. stop and post a `BLOCKER` if it changed unexpectedly;
+4. use a normal non-force push.
+
+A local worktree path may be included only as optional diagnostic context. It is marked non-authoritative and must never be required for another machine to resume work.
+
+The pure claim/lease state machine is implemented in `scripts/claim_preflight.py` and covered by deterministic fixture tests. Authenticated remote state (issue comments, branch head) is fetched by the caller and passed into the helpers.
 
 ## Coordination Records
 

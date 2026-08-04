@@ -33,17 +33,42 @@ The canonical issue must link related repositories and their corresponding issue
 
 Only one actor owns an implementation branch at a time.
 
+`git worktree` prevents duplicate checkout only within one local repository. It does not prevent two different machines, separate clones, containers, or agents from working the same remote branch concurrently. Ownership is therefore enforced through an explicit remote claim/lease recorded in the canonical issue.
+
 A normal turn proceeds as follows:
 
 1. The web agent reads remote state and records a bounded assignment or review in GitHub.
-2. The local terminal agent fetches remote state, confirms ownership, and posts `START`.
+2. The local terminal agent fetches remote state, runs claim preflight, posts `START` with an exclusive claim, and implements.
 3. The local agent implements only the assigned slice, commits, pushes, and maintains the draft PR.
-4. The local agent posts `CHECKPOINT`, `BLOCKER`, or `HANDOFF` with remote SHAs and validation.
+4. The local agent posts `CHECKPOINT` (renewing the lease), `BLOCKER`, or `HANDOFF` (releasing or transferring the claim) with remote SHAs and validation.
 5. The web agent reviews only remote repository state and records the next decision or slice.
 
 Parallel work is allowed only when the canonical issue explicitly partitions it into separate issues or sub-issues, branches, and PRs. Two agents must not make concurrent implementation decisions on the same branch.
 
-Ownership transfers must be explicit in the canonical issue and include the branch, head SHA, PR, unresolved work, and new owner.
+### Claim and Lease Protocol
+
+- `START` establishes an exclusive claim on the branch with a unique `claim_id`, `claim_state`, actor identity and environment, repository, canonical issue, branch, pull request, `expected_remote_head`, `claimed_at_utc`, `lease_expires_utc`, and the assigned slice.
+- The default lease is four hours and is renewable via `CHECKPOINT`. A claim must never be indefinite; leases beyond the absolute ceiling are rejected.
+- `HANDOFF` must release the claim (`claim_state: released`) or transfer it to a named next actor (`claim_state: transferred`) with the exact branch and head SHA.
+- Supported states: `active`, `renewed`, `released`, `transferred`, `expired`.
+
+Before material work an agent must:
+
+1. fetch remote issue and branch state;
+2. identify the latest valid claim for the branch;
+3. fail closed if another actor holds an unexpired claim;
+4. verify that the remote branch still equals the claim's `expected_remote_head`.
+
+Before every push an agent must:
+
+1. fetch the remote branch again;
+2. compare the actual remote head to the claim's `expected_remote_head`;
+3. stop and post a `BLOCKER` if it changed unexpectedly;
+4. use a normal non-force push.
+
+Ownership transfers must be explicit in the canonical issue and include the branch, head SHA, PR, unresolved work, and new owner. A local worktree path may be included as optional diagnostic context only; it is non-authoritative and never required for another machine to resume work.
+
+The pure claim/lease state machine lives in `scripts/claim_preflight.py` with deterministic fixture tests. Authenticated remote state is fetched by the caller and passed into the helpers.
 
 ## Branch Discipline
 
@@ -61,7 +86,7 @@ Use these uppercase record types in the canonical issue.
 
 ### START
 
-Post before material work:
+Post before material work. `START` establishes an exclusive claim on the branch.
 
 ```text
 START
@@ -72,6 +97,11 @@ Branch: <branch>
 Base SHA: <sha>
 Starting head: <sha>
 PR: <number or not opened>
+claim_id: <unique claim identifier>
+claim_state: active
+claimed_at_utc: <ISO-8601 UTC>
+lease_expires_utc: <ISO-8601 UTC, default 4 hours>
+expected_remote_head: <sha recorded by the claim>
 Assigned slice: <bounded objectives>
 Planned validation: <commands and hardware gates>
 Known blockers: <none or explicit list>
@@ -80,12 +110,15 @@ Safety boundary: <prohibited actions>
 
 ### CHECKPOINT
 
-Post after a meaningful slice or before changing the plan:
+Post after a meaningful slice or before changing the plan. A `CHECKPOINT` may renew the same claim by extending its explicit expiration:
 
 ```text
 CHECKPOINT
 Actor/tool: <actor>
 Branch/head: <branch>@<sha>
+claim_id: <same claim identifier>
+claim_state: renewed
+lease_expires_utc: <extended ISO-8601 UTC>
 Commits: <sha list>
 Completed: <facts>
 Changed paths: <paths>
@@ -134,6 +167,10 @@ Actor/tool and environment: <identity>
 Branch: <branch>
 PR: <number or URL>
 Base/head: <base sha>..<head sha>
+claim_id: <claim being closed>
+claim_state: released | transferred
+next_actor: <named actor when transferred>
+final_remote_head: <sha>
 Implemented: <concise summary>
 Validation: <commands, counts, and hardware targets>
 Artifacts: <locations, classifications, hashes>
@@ -143,6 +180,8 @@ Human action required: <none or exact action>
 Safety confirmation: <prohibited actions not performed>
 Recommended next step: <one bounded step>
 ```
+
+`HANDOFF` must release the claim (`claim_state: released`) or transfer it to a named next actor (`claim_state: transferred`) with the exact branch and head SHA. A claim must never be left active across an ending turn.
 
 `.github/agent-handoff.schema.json` defines the machine-readable equivalent. Structured JSON may be attached or committed when useful, but the issue comment must remain understandable to a human reviewer.
 

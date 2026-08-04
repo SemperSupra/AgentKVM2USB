@@ -69,7 +69,9 @@ body:
     attributes:
       label: Coordination acknowledgement
       options:
-        - label: I will post START, CHECKPOINT or BLOCKER, and HANDOFF records to this issue.
+        - label: I will post START with an exclusive claim (claim_id, expected head, lease expiry), CHECKPOINT or BLOCKER, and HANDOFF that releases or transfers the claim to this issue.
+          required: true
+        - label: I will fetch and re-verify the remote branch head against the claim before every push, and use a normal non-force push.
           required: true
         - label: I will push all intended commits and update the draft PR before ending an agent turn.
           required: true
