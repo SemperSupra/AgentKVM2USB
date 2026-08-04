@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "repository": {
+    "name_with_owner": "SemperSupra/AgentKVM2USB",
+    "display_name": "AgentKVM2USB",
+    "description": "Open-source Python SDK and research toolkit for Epiphan KVM2USB 3.0 video capture, HID input development, diagnostics, and automation.",
+    "visibility": "public",
+    "default_branch": "main",
+    "archived": false,
+    "homepage": null,
+    "topics": [
+      "automation",
+      "epiphan",
+      "hardware",
+      "hid",
+      "kvm",
+      "python",
+      "reverse-engineering",
+      "usb",
+      "uvc"
+    ]
+  },
+  "project": {
+    "primary_language": "Python",
+    "purpose": "Provide an independently written SDK, diagnostics, packaging, and research tooling for operating and understanding Epiphan KVM2USB 3.0 hardware through standard HID and UVC interfaces.",
+    "current_scope": [
+      "Video capture through host UVC interfaces",
+      "Profile-driven HID discovery and input encoding",
+      "Keyboard, relative mouse, pen, and touch research",
+      "Hardware-safe diagnostics and reproducible experiments",
+      "Container-first reverse-engineering support",
+      "Portable Windows packaging and local deployment"
+    ],
+    "out_of_scope_without_explicit_approval": [
+      "Firmware or FPGA flashing",
+      "EDID or persistent device writes",
+      "Undocumented vendor OUT control transfers",
+      "Committing proprietary vendor binaries or restricted captures"
+    ],
+    "canonical_documents": {
+      "readme": "README.md",
+      "agent_instructions": "AGENTS.md",
+      "project_status": "PROJECT_STATUS.md",
+      "coordination": "docs/REMOTE_AGENT_COORDINATION.md",
+      "input_strategy": "docs/INPUT_PATH_STRATEGY.md",
+      "packaging": "PACKAGING.md",
+      "hardware_report": "HARDWARE_REPORT.md"
+    },
+    "canonical_prompts": {
+      "local_agent_kickoff": "prompts/LOCAL_AGENT_KICKOFF.md",
+      "web_agent_review": "prompts/WEB_AGENT_REVIEW.md",
+      "new_repository_bootstrap": "prompts/NEW_REPOSITORY_BOOTSTRAP.md",
+      "issue16_review_closeout": "prompts/ISSUE16_REVIEW_CLOSEOUT.md",
+      "renderer": "scripts/render_agent_prompt.py"
+    },
+    "canonical_tools": {
+      "metadata_validator": "scripts/validate_repository_metadata.py",
+      "metadata_applier": "scripts/apply_repository_metadata.py",
+      "claim_preflight": "scripts/claim_preflight.py"
+    },
+    "canonical_workstreams": {
+      "input_path": 8,
+      "downstream_hid_recovery": 14,
+      "repository_governance": 16
+    },
+    "related_repositories": [
+      {
+        "name_with_owner": "SemperSupra/OpenKVM2USB",
+        "relationship": "Open hardware and USB identity coordination"
+      },
+      {
+        "name_with_owner": "SemperSupra/windows-package-foundry",
+        "relationship": "Package control and deployment coordination"
+      }
+    ],
+    "evidence_policy": {
+      "public_repository": "Sanitized facts, independently written code, manifests, hashes, references, and conclusions only.",
+      "restricted_evidence": "Raw proprietary captures, vendor binaries, credentials, personal data, and decompiled vendor material must remain in an approved private evidence repository."
+    }
+  }
+}

@@ -1,145 +1,293 @@
-# Remote Coordination Protocol
+# Remote Agent Coordination Protocol
 
-GitHub is the coordination point between the web assistant, local development
-agents, and human reviewers. Do not rely on chat transcripts as the only record
-of decisions, progress, tests, or unresolved questions.
+GitHub is the authoritative coordination, communication, provenance, and status surface between the web assistant, local terminal agents, automation, and human reviewers.
 
-## Canonical Records
+This protocol applies to every AgentKVM2USB workstream. Workstream-specific issues may add stricter requirements, but they may not move required coordination into private chat or local-only state.
 
-For the input-path program:
+## Authority Model
 
-- issue #8 is the canonical scope, status, and decision thread;
-- `docs/INPUT_PATH_STRATEGY.md` is the canonical technical plan;
-- the active implementation pull request is the canonical code review surface;
-- commits and test artifacts referenced by the issue or PR are the canonical
-  execution record.
+The following records are authoritative, in descending order of specificity:
 
-The private research repository is used only for restricted captures and
-proprietary artifacts. Public implementation work must remain independently
-written and must not commit restricted evidence.
+1. the canonical issue for the workstream;
+2. accepted decisions and current assignments in that issue's comments;
+3. the active branch and pull request;
+4. reviewed commits, tests, checks, releases, and linked evidence records;
+5. tracked project documents and metadata manifests.
 
-## Turn Model
+Chat transcripts, terminal output that was not published, and an agent's private memory are not authoritative. An actor may use them as working context but must publish every material fact needed by the next actor.
 
-Only one actor should be making implementation decisions at a time.
+## Canonical Records Per Workstream
 
-1. The web assistant reviews the remote repository and records scope or feedback.
-2. A local agent fetches the remote state and performs the assigned implementation
-   slice.
-3. The local agent pushes commits, updates issue #8, and opens or updates a draft
-   pull request.
-4. The web assistant reviews the issue, commits, diff, tests, and PR discussion.
-5. The web assistant records findings and the next bounded implementation slice
-   in GitHub before returning the turn to the local agent.
+Every workstream requires:
 
-The user should normally need to transfer only the minimal prompt identifying the
-repository and canonical issue.
+- one canonical issue for purpose, scope, constraints, current state, decisions, blockers, dependencies, artifacts, and exit criteria;
+- one bounded branch per active implementation slice;
+- one draft PR as the code and document review surface;
+- linked commits and deterministic validation evidence;
+- issue comments for cross-session coordination;
+- PR review threads for file- and code-specific findings.
 
-## Local Agent Startup Procedure
+The canonical issue must link related repositories and their corresponding issues or PRs when work crosses repository boundaries.
 
-The local agent must:
+## Turn Ownership and Concurrency
 
-1. clone or fetch `SemperSupra/AgentKVM2USB`;
-2. read `AGENTS.md`, `PROJECT_STATUS.md`, issue #8, this document, and
-   `docs/INPUT_PATH_STRATEGY.md`;
-3. inspect open pull requests and recent issue #8 comments;
-4. determine the current assigned phase and acceptance gate from GitHub;
-5. create or continue the branch named in the issue or active PR;
-6. post a short `START` comment to issue #8 before implementation.
+Only one actor owns an implementation branch at a time.
 
-The `START` comment should include:
+`git worktree` prevents duplicate checkout only within one local repository. It does not prevent two different machines, separate clones, containers, or agents from working the same remote branch concurrently. Ownership is therefore enforced through an explicit remote claim/lease recorded in the canonical issue.
+
+A normal turn proceeds as follows:
+
+1. The web agent reads remote state and records a bounded assignment or review in GitHub.
+2. The local terminal agent fetches remote state, runs claim preflight, posts `START` with an exclusive claim, and implements.
+3. The local agent implements only the assigned slice, commits, pushes, and maintains the draft PR.
+4. The local agent posts `CHECKPOINT` (renewing the lease), `BLOCKER`, or `HANDOFF` (releasing or transferring the claim) with remote SHAs and validation.
+5. The web agent reviews only remote repository state and records the next decision or slice.
+
+Parallel work is allowed only when the canonical issue explicitly partitions it into separate issues or sub-issues, branches, and PRs. Two agents must not make concurrent implementation decisions on the same branch.
+
+### Claim and Lease Protocol
+
+- `START` establishes an exclusive claim on the branch with a unique `claim_id`, `claim_state`, actor identity and environment, repository, canonical issue, branch, pull request, `expected_remote_head`, `claimed_at_utc`, `lease_expires_utc`, and the assigned slice.
+- The default lease is four hours and is renewable via `CHECKPOINT`. A claim must never be indefinite; leases beyond the absolute ceiling are rejected.
+- `HANDOFF` must release the claim (`claim_state: released`) or transfer it to a named next actor (`claim_state: transferred`) with the exact branch and head SHA.
+- Supported states: `active`, `renewed`, `released`, `transferred`, `expired`.
+
+Before material work an agent must:
+
+1. fetch remote issue and branch state;
+2. identify the latest valid claim for the branch;
+3. fail closed if another actor holds an unexpired claim;
+4. verify that the remote branch still equals the claim's `expected_remote_head`.
+
+Before every push an agent must:
+
+1. fetch the remote branch again;
+2. compare the actual remote head to the claim's `expected_remote_head`;
+3. stop and post a `BLOCKER` if it changed unexpectedly;
+4. use a normal non-force push.
+
+Ownership transfers must be explicit in the canonical issue and include the branch, head SHA, PR, unresolved work, and new owner. A local worktree path may be included as optional diagnostic context only; it is non-authoritative and never required for another machine to resume work.
+
+The pure claim/lease state machine lives in `scripts/claim_preflight.py` with deterministic fixture tests. Authenticated remote state is fetched by the caller and passed into the helpers.
+
+## Branch Discipline
+
+- Do not commit directly to `main` or another integration branch.
+- Ordinary branches use `issue-<number>-<bounded-purpose>`.
+- Approved governance, documentation, release, and emergency branches may use `governance/<purpose>`, `docs/<purpose>`, `release/<purpose>`, or `hotfix/<purpose>` when linked to a canonical issue.
+- A branch contains one coherent implementation slice.
+- Unrelated work requires another issue and branch.
+- Never force-push a shared branch without an explicit issue decision and recovery plan.
+- Do not modify another active worktree or PR without an ownership transfer.
+
+## Required Coordination Records
+
+Use these uppercase record types in the canonical issue.
+
+### START
+
+Post before material work. `START` establishes an exclusive claim on the branch.
 
 ```text
-Actor: <agent/tool>
+START
+Actor/tool: <name and version>
+Environment: <host, OS, worktree>
+Issue: #<number>
 Branch: <branch>
-Base commit: <sha>
-Assigned slice: <phase and bounded objectives>
-Planned validation: <commands and hardware tests>
-Blocked by: <none or explicit blockers>
+Base SHA: <sha>
+Starting head: <sha>
+PR: <number or not opened>
+claim_id: <unique claim identifier>
+claim_state: active
+claimed_at_utc: <ISO-8601 UTC>
+lease_expires_utc: <ISO-8601 UTC, default 4 hours>
+expected_remote_head: <sha recorded by the claim>
+Assigned slice: <bounded objectives>
+Planned validation: <commands and hardware gates>
+Known blockers: <none or explicit list>
+Safety boundary: <prohibited actions>
 ```
 
-## Work Rules
+### CHECKPOINT
 
-- Preserve unrelated local changes.
-- Do not commit directly to `main`.
-- Keep implementation slices bounded by a phase exit gate.
-- Do not add firmware, FPGA, EDID, flash, or other persistent device writes.
-- Do not infer HID report formats from usage values alone.
-- Keep proprietary binaries, raw captures, and decompiled vendor material out of
-  this public repository.
-- Use structured errors instead of silent exception suppression in new code.
-- Add tests with each behavioral change.
-- Record target-side validation, not only successful host writes.
-- Do not close issue #8 until all phases and the full validation matrix are
-  complete.
-
-## Progress Updates
-
-Use issue #8 for cross-session progress, decisions, and blockers. Use the pull
-request for code-specific review.
-
-Post a `CHECKPOINT` issue comment after each meaningful slice or when a blocker
-changes the plan:
+Post after a meaningful slice or before changing the plan. A `CHECKPOINT` may renew the same claim by extending its explicit expiration:
 
 ```text
-Checkpoint: <short name>
+CHECKPOINT
+Actor/tool: <actor>
+Branch/head: <branch>@<sha>
+claim_id: <same claim identifier>
+claim_state: renewed
+lease_expires_utc: <extended ISO-8601 UTC>
 Commits: <sha list>
 Completed: <facts>
+Changed paths: <paths>
 Validation: <commands and outcomes>
-Hardware evidence: <sanitized summary or private artifact IDs>
-Decisions needed: <none or explicit questions>
-Next: <next bounded step>
+Artifacts: <locations, classifications, hashes>
+Decisions: <decisions and authority>
+Blockers: <none or explicit list>
+Next: <one bounded step>
 ```
 
-Do not paste large logs into comments. Commit small sanitized fixtures where
-appropriate, attach relevant CI results, or reference private artifact IDs.
+### DECISION
 
-## Pull Request Requirements
-
-Open a draft PR as soon as there is a reviewable vertical slice. Link issue #8.
-The PR description must include:
-
-- assigned phase and exit gate;
-- architecture and files changed;
-- backward-compatibility impact;
-- USB/HID assumptions and evidence basis;
-- tests run and exact outcomes;
-- hardware validation performed or still required;
-- restricted inputs not used;
-- remaining risks and blockers.
-
-Keep the PR draft until the phase exit gate is met and review findings are
-resolved.
-
-## Completion Handoff
-
-At the end of the local-agent turn, post a `HANDOFF` comment to issue #8:
+Use for material design, dependency, security, safety, scope, or acceptance decisions:
 
 ```text
-Handoff
-Branch: <branch>
-PR: <number or URL>
-Head commit: <sha>
-Implemented: <concise summary>
-Validation: <commands, counts, and hardware targets>
-Known gaps: <explicit list>
-Recommended next step: <one bounded step>
-Human action required: <none or exact action>
+DECISION
+Question: <what was decided>
+Decision: <selected outcome>
+Authority: <human approval, issue acceptance, specification, or evidence>
+Evidence: <links and hashes>
+Alternatives rejected: <brief list>
+Consequences: <implementation, risk, and follow-up>
 ```
 
-Push every intended commit before posting the handoff. The web assistant will
-use the remote repository, issue, and PR—not a pasted chat summary—to assess the
-work.
+### BLOCKER
 
-## Current First Slice
+Use when progress stops or an assumption is disproved:
 
-Unless issue #8 records a newer assignment, the first implementation slice is
-**Phase A — Discovery and diagnostics** from `docs/INPUT_PATH_STRATEGY.md`.
+```text
+BLOCKER
+Branch/head: <branch>@<sha>
+Blocked operation: <exact operation>
+Observed evidence: <facts and logs/artifacts>
+Impact: <what cannot proceed>
+Safe work still possible: <bounded alternatives>
+Human action required: <exact action or none>
+```
 
-Phase A must not alter input report bytes. Its purpose is to establish:
+### HANDOFF
 
-- device profiles;
-- complete HID metadata capture;
-- physical-device grouping;
-- deterministic multi-device selection;
-- structured discovery diagnostics;
-- tests for missing, duplicate, partial, and multiple-device topologies.
+Post before ending an agent turn:
+
+```text
+HANDOFF
+Actor/tool and environment: <identity>
+Branch: <branch>
+PR: <number or URL>
+Base/head: <base sha>..<head sha>
+claim_id: <claim being closed>
+claim_state: released | transferred
+next_actor: <named actor when transferred>
+final_remote_head: <sha>
+Implemented: <concise summary>
+Validation: <commands, counts, and hardware targets>
+Artifacts: <locations, classifications, hashes>
+Decisions: <decision references>
+Known gaps/blockers: <explicit list>
+Human action required: <none or exact action>
+Safety confirmation: <prohibited actions not performed>
+Recommended next step: <one bounded step>
+```
+
+`HANDOFF` must release the claim (`claim_state: released`) or transfer it to a named next actor (`claim_state: transferred`) with the exact branch and head SHA. A claim must never be left active across an ending turn.
+
+`.github/agent-handoff.schema.json` defines the machine-readable equivalent. Structured JSON may be attached or committed when useful, but the issue comment must remain understandable to a human reviewer.
+
+## Pull Request Discipline
+
+Open a draft PR as soon as there is a reviewable vertical slice.
+
+The PR body must remain current and include:
+
+- canonical issue and assigned slice;
+- exit gate;
+- architecture and changed paths;
+- evidence basis and repository boundaries;
+- exact validation results;
+- hardware validation completed or required;
+- compatibility, security, and safety effects;
+- metadata changes;
+- remaining blockers and human actions;
+- latest branch head.
+
+Use the PR for code-specific review. Use the canonical issue for cross-agent assignment, decisions, blockers, and handoff.
+
+A PR remains draft until its issue exit gate is met and requested changes are resolved. Do not use a stale PR description as a historical log; keep the body accurate and use comments/commits for history.
+
+## Metadata Governance
+
+`.github/repository-metadata.json` defines the expected project-specific identity and canonical document locations.
+
+Metadata includes:
+
+- repository name, description, topics, visibility, homepage, archived state, and default branch;
+- README and package/application identity;
+- current supported capabilities and explicit exclusions;
+- issue/PR titles, bodies, labels, milestones, dependencies, and states;
+- release versions, notes, assets, checksums, and support status;
+- canonical status, safety, coordination, and technical documents;
+- related repository relationships.
+
+Run:
+
+```bash
+python scripts/validate_repository_metadata.py --remote auto
+```
+
+Use `--remote required` for a release or metadata-governance gate when authenticated `gh` access is expected. The validator reports drift; it does not silently change GitHub settings.
+
+When creating a new repository, populate the manifest with the actual project identity before copying templates. Generic or irrelevant topics, descriptions, issue forms, and release text are defects.
+
+## Evidence and Provenance
+
+Every material artifact should have:
+
+- a stable repository or approved private evidence location;
+- source and acquisition method;
+- timestamp;
+- producing actor/tool and version;
+- hash when practical;
+- public, sanitized, or private-reference classification;
+- links from the canonical issue or PR.
+
+Do not paste large raw logs into comments. Commit small sanitized fixtures, attach approved artifacts, cite CI results, or reference private artifact IDs and hashes.
+
+Proprietary binaries, restricted captures, credentials, personal data, and raw decompiled vendor material must not enter a public repository.
+
+## Cross-Repository Work
+
+When a workstream spans repositories:
+
+- create or identify a canonical issue in each affected repository;
+- link both directions;
+- state which repository owns the authoritative design or interface;
+- use separate branches and PRs per repository;
+- record dependency order and compatible commit/release identifiers;
+- do not depend on unpushed local files;
+- do not declare completion until each repository's metadata and coordination records are current.
+
+## Local Agent Startup
+
+A terminal agent must:
+
+1. clone or fetch the remote repository;
+2. fetch all relevant branches and PR refs;
+3. read `AGENTS.md`, `PROJECT_STATUS.md`, `.github/repository-metadata.json`, this document, the canonical issue, and linked PRs;
+4. confirm branch ownership and remote head;
+5. inspect recent issue and PR comments for assignments, requested changes, decisions, and blockers;
+6. create or reuse the issue branch without disturbing unrelated work;
+7. post `START` before implementation.
+
+If remote state is incomplete or contradictory, post `BLOCKER` or `DECISION NEEDED` to the canonical issue rather than resolving the discrepancy privately.
+
+## End-of-Turn Gate
+
+A local agent turn is incomplete until:
+
+- intended commits are pushed;
+- the draft PR body reflects the current head;
+- tests and hardware evidence are recorded;
+- artifacts and hashes are referenced;
+- blockers and human actions are explicit;
+- a `HANDOFF` is posted;
+- the next actor can continue from GitHub alone.
+
+## Current Canonical Workstreams
+
+The machine-readable metadata manifest is authoritative for current mappings. At the time this protocol was generalized:
+
+- issue #8 coordinates profile-driven input-path work;
+- issue #14 coordinates downstream HID forwarding and activation recovery;
+- issue #16 coordinates repository-native agent governance and metadata.
