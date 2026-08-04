@@ -69,17 +69,17 @@ fields:
     required:
       - correlation_id
       - output_root
-      - ignored
+      - private_root
       - event_markers
     fields:
       correlation_id:
         type: string
       output_root:
         type: string
-        description: Must resolve under an ignored/private capture path.
-      ignored:
-        type: boolean
-        const: true
+        description: Resolved and verified under an approved ignored/private capture root.
+      private_root:
+        type: string
+        description: Approved ignored/private evidence root (e.g. .work/evidence).
       event_markers:
         type: array
         items:
@@ -87,12 +87,23 @@ fields:
           required:
             - event
             - description
-  human_authorization_gate:
-    type: string
+  authorization_record:
+    type: object
     nullable: true
     description: >-
-      Non-empty string naming the GitHub issue/comment or human action that
-      authorizes the live capture. A live capture is refused without it.
+      Structured, GitHub-linked, experiment-specific, expiring authorization
+      record. A live capture is refused without a valid non-expired record.
+    required:
+      - canonical_issue
+      - comment_id
+      - comment_url
+      - author
+      - authority
+      - experiment_id
+      - allowed_input_sequence
+      - target
+      - issued_utc
+      - expires_utc
   prohibited:
     type: array
     items:
