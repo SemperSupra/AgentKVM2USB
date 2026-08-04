@@ -9,7 +9,7 @@ required:
   - experiment
   - environment
   - capture
-  - human_authorization_gate
+  - authorization_record
   - prohibited
 
 fields:
@@ -48,11 +48,15 @@ fields:
       - beagle_windows_api_present
       - official_app_present
       - target_state_note
+      - usb_identity
+      - topology
+      - driver_state
+      - target_state_confirmed
     fields:
       host_interface:
         type: string
         nullable: true
-        description: Host USBPcap interface or Wireshark capture interface.
+        description: Explicitly selected USBPcap root-hub/device interface. Never auto-selected from interfaces[0].
       target_beagle_port:
         type: integer
       usbpcap_present:
@@ -61,10 +65,26 @@ fields:
         type: boolean
       beagle_windows_api_present:
         type: boolean
+      beagle_windows_api_dir:
+        type: string
+        nullable: true
+        description: Detected Total Phase Windows Beagle API directory; used as --api-dir. Never the evidence root.
       official_app_present:
         type: boolean
       target_state_note:
         type: string
+      usb_identity:
+        type: object
+        description: Detected KVM2USB USB identity (VID/PID/serial) on the selected interface.
+      topology:
+        type: object
+        description: Physical topology, cable path, Beagle position, target identity (detected or human-supplied).
+      driver_state:
+        type: object
+        description: Official Epiphan app/driver and Total Phase Beagle driver status.
+      target_state_confirmed:
+        type: boolean
+        description: Human confirmation that the target is in a harmless state for the allowed input sequence.
   capture:
     required:
       - correlation_id
