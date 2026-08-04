@@ -17,6 +17,13 @@ from hid_discovery import (
     DiscoveryDiagnostic,
     discover_hid_devices,
 )
+from keyboard_input import (
+    KeyboardActionResult,
+    KeyboardCodec,
+    KeyboardProfileError,
+    KeyboardReportProfile,
+    KeyboardState,
+)
 
 VERSION = "0.2.0"
 RUNTIME_SESSION_ROOT = "runtime_sessions"
@@ -82,6 +89,8 @@ class EpiphanKVM_SDK:
         self.hid_discovery = None
         self.hid_diagnostics = []
         self.hid_connection_ready = False
+        self.keyboard_codec = KeyboardCodec()
+        self.keyboard_state = KeyboardState(self.keyboard_codec)
         self.cap = None
         self.latest_frame = None
         self.current_camera_name = None
@@ -271,6 +280,25 @@ class EpiphanKVM_SDK:
         if selected is None or not self.hid_discovery.topology_valid:
             return
 
+        keyboard_collection = next(
+            (collection for collection in selected.profile.collections if collection.role == "keyboard"),
+            None,
+        )
+        if keyboard_collection is not None:
+            try:
+                profile = KeyboardReportProfile.from_collection(keyboard_collection)
+            except KeyboardProfileError as exc:
+                self.hid_diagnostics.append(DiscoveryDiagnostic(
+                    "invalid_keyboard_profile",
+                    str(exc),
+                    device_id=selected.device_id,
+                    role="keyboard",
+                    details={"code": exc.code, **exc.details},
+                ))
+                return
+            self.keyboard_codec = KeyboardCodec(profile)
+            self.keyboard_state = KeyboardState(self.keyboard_codec)
+
         handles = {
             "keyboard": "kb_dev",
             "relative_mouse": "mouse_dev",
@@ -424,25 +452,188 @@ class EpiphanKVM_SDK:
         self.touch_dev.write([0x00] + report)
         time.sleep(0.1); self.touch_dev.write([0x00, 0, 0, 0, 0, 0])
 
-    def type(self, text):
-        self._log_event("KEYBOARD_TYPE", text)
-        for char in text.lower():
-            if char in self.KEY_MAP: self.press(char)
-            time.sleep(0.05)
+    def _write_keyboard_reports(self, reports):
+        if not self.kb_dev:
+            self.keyboard_state.reset()
+            return KeyboardActionResult(
+                False,
+                "no_device",
+                "Keyboard HID collection is unavailable.",
+                details={"release_all_attempted": False, "release_all_succeeded": False},
+            )
+        try:
+            for report in reports:
+                self.kb_dev.write(list(report))
+        except Exception as exc:
+            self.keyboard_state.reset()
+            recovery_report = self.keyboard_codec.encode(0, ())
+            recovery_succeeded = False
+            try:
+                self.kb_dev.write(list(recovery_report))
+                recovery_succeeded = True
+            except Exception:
+                pass
+            return KeyboardActionResult(
+                False,
+                "write_failed",
+                f"Keyboard report write failed: {exc}",
+                reports=(tuple(recovery_report),) if recovery_succeeded else (),
+                details={
+                    "release_all_attempted": True,
+                    "release_all_succeeded": recovery_succeeded,
+                },
+            )
+        return KeyboardActionResult(True, reports=tuple(reports))
+
+    def _send_keyboard_action(self, action):
+        if not action.ok:
+            return action
+        return self._write_keyboard_reports(action.reports)
+
+    def key_down(self, key):
+        self._log_event("KEYBOARD_KEY_DOWN", str(key))
+        action, _ = self.keyboard_state.key_down(key)
+        return self._send_keyboard_action(action)
+
+    def key_up(self, key):
+        self._log_event("KEYBOARD_KEY_UP", str(key))
+        action, _ = self.keyboard_state.key_up(key)
+        return self._send_keyboard_action(action)
+
+    def raw_key_down(self, usage):
+        try:
+            usage = int(usage)
+        except (TypeError, ValueError):
+            return KeyboardActionResult(False, "invalid_usage", "Keyboard usage must be an integer.")
+        action, _ = self.keyboard_state.key_down_usage(usage, f"0x{usage:02x}")
+        return self._send_keyboard_action(action)
+
+    def raw_key_up(self, usage):
+        try:
+            usage = int(usage)
+        except (TypeError, ValueError):
+            return KeyboardActionResult(False, "invalid_usage", "Keyboard usage must be an integer.")
+        action, _ = self.keyboard_state.key_up_usage(usage, f"0x{usage:02x}")
+        return self._send_keyboard_action(action)
 
     def press(self, key_name):
-        self._log_event("KEYBOARD_PRESS", key_name)
-        code = self.KEY_MAP.get(key_name.lower())
-        if code: self._raw_kb(0, [code]); time.sleep(0.02); self._raw_kb(0, [0])
+        self._log_event("KEYBOARD_PRESS", str(key_name))
+        down = self.key_down(key_name)
+        if not down.ok:
+            return down
+        time.sleep(0.02)
+        up = self.key_up(key_name)
+        if not up.ok and not up.details.get("release_all_succeeded", False):
+            self.release_all()
+        return KeyboardActionResult(
+            up.ok,
+            up.code,
+            up.message,
+            reports=down.reports + up.reports,
+            details=up.details,
+        )
 
     def hotkey(self, *args):
-        self._log_event("KEYBOARD_HOTKEY", "+".join(args))
-        mods = 0; keys = []
-        for a in args:
-            a = a.lower()
-            if a in self.MOD_MAP: mods |= self.MOD_MAP[a]
-            elif a in self.KEY_MAP: keys.append(self.KEY_MAP[a])
-        self._raw_kb(mods, keys); time.sleep(0.05); self._raw_kb(0, [0])
+        self._log_event("KEYBOARD_HOTKEY", "+".join(str(arg) for arg in args))
+        pressed = []
+        reports = []
+        for key in args:
+            action = self.key_down(key)
+            if not action.ok:
+                if not action.details.get("release_all_succeeded", False):
+                    self.release_all()
+                return action
+            reports.extend(action.reports)
+            pressed.append(key)
+        for key in reversed(pressed):
+            action = self.key_up(key)
+            reports.extend(action.reports)
+            if not action.ok:
+                if not action.details.get("release_all_succeeded", False):
+                    self.release_all()
+                return action
+        return KeyboardActionResult(True, reports=tuple(reports))
+
+    def type_text(self, text, layout="us"):
+        if layout.lower() != "us":
+            self.release_all()
+            return KeyboardActionResult(False, "unsupported_layout", f"Unsupported keyboard layout {layout!r}.")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        reports = []
+        for index, char in enumerate(text):
+            character = self.keyboard_codec.character(char)
+            if character is None:
+                self.release_all()
+                return KeyboardActionResult(
+                    False,
+                    "unsupported_character",
+                    f"Unsupported character {char!r} at index {index}.",
+                    reports=tuple(reports),
+                    details={"character": char, "index": index, "layout": layout},
+                )
+            modifiers, usage = character
+            added_shift = bool(
+                modifiers & self.keyboard_codec.MODIFIERS["shift"]
+                and "lshift" not in self.keyboard_state.active_modifiers
+            )
+            if added_shift:
+                action = self.key_down("shift")
+                if not action.ok:
+                    if not action.details.get("release_all_succeeded", False):
+                        self.release_all()
+                    return action
+                reports.extend(action.reports)
+            action, _ = self.keyboard_state.key_down_usage(usage, char)
+            action = self._send_keyboard_action(action)
+            if not action.ok:
+                if not action.details.get("release_all_succeeded", False):
+                    self.release_all()
+                return action
+            reports.extend(action.reports)
+            action, _ = self.keyboard_state.key_up_usage(usage, char)
+            action = self._send_keyboard_action(action)
+            if not action.ok:
+                if not action.details.get("release_all_succeeded", False):
+                    self.release_all()
+                return action
+            reports.extend(action.reports)
+            if added_shift:
+                action = self.key_up("shift")
+                if not action.ok:
+                    if not action.details.get("release_all_succeeded", False):
+                        self.release_all()
+                    return action
+                reports.extend(action.reports)
+            time.sleep(0.05)
+        return KeyboardActionResult(True, reports=tuple(reports))
+
+    def type(self, text):
+        self._log_event("KEYBOARD_TYPE", text)
+        return self.type_text(text, layout="us")
+
+    def release_all(self):
+        report = self.keyboard_codec.encode(0, ())
+        self.keyboard_state.reset()
+        if not self.kb_dev:
+            return KeyboardActionResult(
+                False,
+                "no_device",
+                "Keyboard HID collection is unavailable.",
+                reports=(report,),
+                details={"release_all_attempted": False, "release_all_succeeded": False},
+            )
+        result = self._write_keyboard_reports((report,))
+        return KeyboardActionResult(
+            result.ok,
+            result.code,
+            result.message,
+            reports=result.reports,
+            details={
+                **result.details,
+                "release_all_attempted": True,
+                "release_all_succeeded": result.ok,
+            },
+        )
 
     def run_macro(self, macro_script: str):
         """
@@ -454,40 +645,98 @@ class EpiphanKVM_SDK:
         - HOTKEY <mod1> <mod2> <key>: Presses a key combination.
         - CLICK <x_percent> <y_percent> [button]: Performs a mouse click.
         """
-        lines = macro_script.strip().splitlines()
-        for line_num, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
+        lines = macro_script.replace("\r\n", "\n").replace("\r", "\n").strip().splitlines()
+        reports = []
+        failure = None
+        try:
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
 
-            parts = line.split(" ", 1)
-            cmd = parts[0].upper()
-            args = parts[1] if len(parts) > 1 else ""
+                parts = line.split(" ", 1)
+                cmd = parts[0].upper()
+                args = parts[1] if len(parts) > 1 else ""
 
-            try:
-                if cmd == "DELAY":
-                    ms = int(args.strip())
-                    time.sleep(ms / 1000.0)
-                elif cmd == "TYPE":
-                    self.type(args)
-                elif cmd == "PRESS":
-                    self.press(args.strip())
-                elif cmd == "HOTKEY":
-                    keys = [k.strip() for k in args.split()]
-                    self.hotkey(*keys)
-                elif cmd == "CLICK":
-                    click_args = [arg.strip() for arg in args.split()]
-                    if len(click_args) >= 2:
-                        x = float(click_args[0])
-                        y = float(click_args[1])
-                        button = int(click_args[2]) if len(click_args) > 2 else 1
-                        self.click(x, y, button)
+                try:
+                    if cmd == "DELAY":
+                        ms = int(args.strip())
+                        time.sleep(ms / 1000.0)
+                    elif cmd == "TYPE":
+                        action = self.type(args)
+                        if not action.ok:
+                            failure = (line_num, line, action)
+                            break
+                        reports.extend(action.reports)
+                    elif cmd == "PRESS":
+                        action = self.press(args.strip())
+                        if not action.ok:
+                            failure = (line_num, line, action)
+                            break
+                        reports.extend(action.reports)
+                    elif cmd == "HOTKEY":
+                        keys = [k.strip() for k in args.split()]
+                        action = self.hotkey(*keys)
+                        if not action.ok:
+                            failure = (line_num, line, action)
+                            break
+                        reports.extend(action.reports)
+                    elif cmd == "CLICK":
+                        click_args = [arg.strip() for arg in args.split()]
+                        if len(click_args) >= 2:
+                            x = float(click_args[0])
+                            y = float(click_args[1])
+                            button = int(click_args[2]) if len(click_args) > 2 else 1
+                            self.click(x, y, button)
+                        else:
+                            failure = (
+                                line_num,
+                                line,
+                                KeyboardActionResult(False, "invalid_macro", "CLICK requires x_percent and y_percent."),
+                            )
+                            break
                     else:
-                        print(f"[SDK] Macro Error at line {line_num}: CLICK requires at least x_percent and y_percent")
-                else:
-                    print(f"[SDK] Macro Error at line {line_num}: Unknown command '{cmd}'")
-            except Exception as e:
-                print(f"[SDK] Macro Error at line {line_num}: Exception executing '{line}': {e}")
+                        failure = (
+                            line_num,
+                            line,
+                            KeyboardActionResult(False, "invalid_macro", f"Unknown command {cmd!r}."),
+                        )
+                        break
+                except Exception as e:
+                    failure = (
+                        line_num,
+                        line,
+                        KeyboardActionResult(False, "macro_exception", str(e)),
+                    )
+                    break
+        finally:
+            release = self.release_all()
+            reports.extend(release.reports)
+
+        if failure is not None:
+            line_num, line, action = failure
+            return KeyboardActionResult(
+                False,
+                "macro_failed",
+                action.message,
+                reports=tuple(reports),
+                details={
+                    "line": line_num,
+                    "command": line,
+                    "action_code": action.code,
+                    "release_all_attempted": release.details.get("release_all_attempted", False),
+                    "release_all_succeeded": release.details.get("release_all_succeeded", False),
+                },
+            )
+        if not release.ok:
+            return KeyboardActionResult(
+                False,
+                "release_failed",
+                release.message,
+                reports=tuple(reports),
+                details=release.details,
+            )
+        return KeyboardActionResult(True, reports=tuple(reports))
 
     def get_screen(self, prefix="capture", overlay=True):
         path = self._runtime_path(self._generate_filename(prefix, "jpg"))
@@ -587,11 +836,11 @@ class EpiphanKVM_SDK:
         time.sleep(2)
 
     def _raw_kb(self, mods, keys):
-        if not self.kb_dev: return
-        r = [0x00]*8; r[0] = mods
-        for i, k in enumerate(keys[:6]): r[2+i] = k
-        try: self.kb_dev.write([0x00] + r)
-        except: self.kb_dev.write(r)
+        try:
+            report = self.keyboard_codec.encode(mods, keys)
+        except ValueError as exc:
+            return KeyboardActionResult(False, "invalid_report", str(exc))
+        return self._write_keyboard_reports((report,))
 
     def set_performance_mode(self, enabled):
         """Toggles between MJPG (compressed) and YUY2 (uncompressed) modes."""
@@ -680,6 +929,7 @@ class EpiphanKVM_SDK:
 
     def close(self):
         self._stop_video = True
+        self.release_all()
         if self.cap: self.cap.release()
         for d in [self.kb_dev, self.mouse_dev, self.touch_dev, self.sys_dev]:
             if d: d.close()
