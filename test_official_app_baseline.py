@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -21,23 +22,49 @@ def _now():
     return dt.datetime(2026, 8, 4, 14, 17, 0, tzinfo=dt.timezone.utc)
 
 
-def _auth_envelope(**overrides):
-    envelope = oab.build_evidence_envelope(
-        repository="SemperSupra/AgentKVM2USB",
-        issue=14,
-        comment_id="5180000000",
-        comment_url="https://github.com/SemperSupra/AgentKVM2USB/issues/14#issuecomment-5180000000",
-        comment_body="Authorize experiment official-app-x on Wyse 5070 for capslock_down, capslock_up.",
-        github_author="mark-e-deyoung",
-        fetched_utc="2026-08-04T14:00:00+00:00",
-        experiment_id="official-app-x",
-        target="Wyse 5070",
-        allowed_input_sequence=["capslock_down", "capslock_up"],
-        issued_utc="2026-08-04T14:00:00+00:00",
-        expires_utc="2026-08-04T20:00:00+00:00",
+def _auth_block(**overrides):
+    block = {
+        "repository": "SemperSupra/AgentKVM2USB",
+        "issue": 14,
+        "experiment_id": "official-app-x",
+        "target": "Wyse 5070",
+        "allowed_input_sequence": ["capslock_down", "capslock_up"],
+        "issued_utc": "2026-08-04T14:00:00+00:00",
+        "expires_utc": "2026-08-04T20:00:00+00:00",
+        "authority": "issue #14 human authorization",
+    }
+    block.update(overrides)
+    return block
+
+
+def _auth_body(block=None):
+    block = block or _auth_block()
+    import json as _json
+    return "Authorize the experiment below.\n\n```json\n" + _json.dumps(block, indent=2) + "\n```\n"
+
+
+def _auth_fetched(block=None, comment_id="5180000000", user="mark-e-deyoung", **overrides):
+    fetched = {
+        "id": comment_id,
+        "body": _auth_body(block),
+        "user": user,
+        "html_url": f"https://github.com/SemperSupra/AgentKVM2USB/issues/14#issuecomment-{comment_id}",
+        "issue_url": "https://api.github.com/repos/SemperSupra/AgentKVM2USB/issues/14",
+        "repository_url": "https://api.github.com/repos/SemperSupra/AgentKVM2USB",
+        "created_at": "2026-08-04T14:00:00Z",
+        "updated_at": "2026-08-04T14:00:00Z",
+    }
+    fetched.update(overrides)
+    return fetched
+
+
+def _auth_envelope(block=None, fetched=None, **overrides):
+    fetched = fetched or _auth_fetched(block)
+    env = oab.ingest_authorization(
+        repository="SemperSupra/AgentKVM2USB", issue=14, comment_id=str(fetched["id"]), fetched=fetched,
     )
-    envelope.update(overrides)
-    return envelope
+    env.update(overrides)
+    return env
 
 
 def _manifest(**overrides):
@@ -101,9 +128,10 @@ def test_evidence_envelope_hash_is_stable_and_verifiable():
     assert env["evidence_sha256"] == oab.sha256_evidence(env)
     ok, reason = oab.verify_authorization(
         env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="mark-e-deyoung", now_utc=_now(),
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
     )
     assert ok is True
+    assert "cached evidence" in reason
 
 
 def test_authorization_rejects_fabricated_non_envelope():
@@ -111,7 +139,7 @@ def test_authorization_rejects_fabricated_non_envelope():
     ok, reason = oab.verify_authorization(
         {"experiment_id": "official-app-x", "authority": "any"},
         experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="anyone", now_utc=_now(),
+        issue=14, human_authority="anyone", now_utc=_now(), refetch=False,
     )
     assert ok is False
 
@@ -121,55 +149,231 @@ def test_authorization_rejects_tampered_envelope():
     env["comment_body"] = "tampered; authorizes nothing"
     ok, reason = oab.verify_authorization(
         env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="mark-e-deyoung", now_utc=_now(),
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
     )
     assert ok is False
-    assert "experiment_id" in reason or "hash" in reason
 
 
 def test_authorization_rejects_wrong_experiment_id():
-    env = _auth_envelope(experiment_id="other-experiment")
+    # A valid-looking envelope whose parsed block has a different experiment id.
+    env = _auth_envelope(block=_auth_block(experiment_id="other-experiment"))
     ok, reason = oab.verify_authorization(
         env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="mark-e-deyoung", now_utc=_now(),
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
     )
     assert ok is False
 
 
 def test_authorization_rejects_expired():
-    env = _auth_envelope(expires_utc="2026-08-04T12:00:00+00:00")
+    env = _auth_envelope(block=_auth_block(expires_utc="2026-08-04T12:00:00+00:00"))
     ok, reason = oab.verify_authorization(
         env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="mark-e-deyoung", now_utc=_now(),
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
     )
     assert ok is False and "expired" in reason
 
 
 def test_authorization_rejects_authority_mismatch():
-    env = _auth_envelope(github_author="someone-else")
+    env = _auth_envelope(fetched=_auth_fetched(user="someone-else"))
     ok, reason = oab.verify_authorization(
         env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
-        issue=14, human_authority="mark-e-deyoung", now_utc=_now(),
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
     )
     assert ok is False and "author" in reason
 
 
-def test_ingest_authorization_from_supplied_fetch():
-    fetched = {
-        "id": "5180000000",
-        "body": "Authorize experiment official-app-x on Wyse 5070 for capslock_down, capslock_up.",
-        "user": "mark-e-deyoung",
-        "html_url": "https://github.com/SemperSupra/AgentKVM2USB/issues/14#issuecomment-5180000000",
-    }
+def test_authorization_rejects_target_difference():
+    # Comment block authorizes a different target than the expected experiment.
+    env = _auth_envelope(block=_auth_block(target="Other Machine"))
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+        expected_target="Wyse 5070",
+    )
+    assert ok is False
+
+
+def test_authorization_rejects_sequence_difference():
+    env = _auth_envelope(block=_auth_block(allowed_input_sequence=["capslock_down"]))
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+        expected_allowed_input_sequence=["capslock_down", "capslock_up"],
+    )
+    assert ok is False
+
+
+def test_authorization_rejects_wrong_comment_id():
+    env = _auth_envelope(fetched=_auth_fetched(comment_id="999"))
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+        expected_comment_id="5180000000",
+    )
+    assert ok is False
+
+
+def test_authorization_rejects_wrong_issue_url():
+    # A fetched comment whose issue_url does not identify the expected issue is
+    # rejected at ingest time; it can never produce a valid envelope.
+    fetched = _auth_fetched(issue_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB/issues/99")
+    try:
+        oab.ingest_authorization(repository="SemperSupra/AgentKVM2USB", issue=14,
+                                 comment_id="5180000000", fetched=fetched)
+        raise AssertionError("expected ingest to reject an issue_url for the wrong issue")
+    except ValueError:
+        pass
+
+
+def test_authorization_rejects_wrong_issue_url_expected():
+    # Caller supplies an expected issue URL that disagrees with the envelope.
+    env = _auth_envelope()
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+        expected_issue_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB/issues/99",
+    )
+    assert ok is False
+
+
+def test_authorization_rejects_wrong_repository():
+    # The comment block names a different repository than the envelope/expected.
+    env = oab.build_evidence_envelope(
+        repository="SemperSupra/AgentKVM2USB", issue=14,
+        comment_id="5180000000",
+        comment_url="https://github.com/SemperSupra/AgentKVM2USB/issues/14#issuecomment-5180000000",
+        issue_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB/issues/14",
+        repository_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB",
+        comment_body=_auth_body(_auth_block(repository="Other/Org")),
+        github_author="mark-e-deyoung",
+        fetched_utc="2026-08-04T14:00:00+00:00",
+        authorization_block=_auth_block(repository="Other/Org"),
+    )
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+    )
+    assert ok is False
+
+
+def test_authorization_rejects_missing_expiry():
+    # The comment block omits expires_utc entirely; ingest must reject it.
+    fetched = _auth_fetched(block=_auth_block(expires_utc=None))
+    try:
+        oab.ingest_authorization(repository="SemperSupra/AgentKVM2USB", issue=14,
+                                 comment_id="5180000000", fetched=fetched)
+        raise AssertionError("expected ingest to reject a block without expires_utc")
+    except ValueError:
+        pass
+
+
+def test_authorization_rejects_expiry_difference():
+    # Caller expects a different expiry than the comment block authorizes.
+    env = _auth_envelope()
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=False,
+        expected_expires_utc="2026-08-05T20:00:00+00:00",
+    )
+    assert ok is False
+
+
+def test_authorization_caller_fields_cannot_fabricate():
+    # Caller-supplied authorization values are not accepted by ingest; there is
+    # no signature path through which they can create an authorization.
+    fetched = _auth_fetched(body="irrelevant body; caller fields present")
+    try:
+        oab.ingest_authorization(
+            repository="SemperSupra/AgentKVM2USB", issue=14, comment_id="5180000000",
+            fetched=fetched, experiment_id="official-app-x", target="Wyse 5070",
+            allowed_input_sequence=["capslock_down"], issued_utc="2026-08-04T14:00:00+00:00",
+            expires_utc="2026-08-04T20:00:00+00:00",
+        )
+        raise AssertionError("expected ingest to reject caller-supplied authorization values")
+    except (TypeError, ValueError):
+        pass
+
+
+def test_authorization_rejects_body_with_only_experiment_id():
+    # A body containing only the experiment id (no target/sequence/expiry) is
+    # not a valid fenced authorization block.
+    fetched = _auth_fetched(body="Authorize experiment official-app-x only.")
+    try:
+        oab.ingest_authorization(repository="SemperSupra/AgentKVM2USB", issue=14,
+                                 comment_id="5180000000", fetched=fetched)
+        raise AssertionError("expected ingest to reject a body without a JSON authorization block")
+    except ValueError:
+        pass
+
+
+def test_authorization_rejects_github_comment_differing_from_cached(monkeypatch):
+    env = _auth_envelope()
+    # Re-fetch returns a different comment body than the cached envelope.
+    monkeypatch.setattr(oab, "fetch_issue_comment",
+                        lambda repo, cid: _auth_fetched(body=_auth_body(_auth_block(experiment_id="changed"))))
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=True,
+    )
+    assert ok is False
+    assert "differs" in reason or "different" in reason
+
+
+def test_authorization_fabricated_envelope_not_proof(monkeypatch):
+    # An arbitrary call to build_evidence_envelope() with a well-formed but
+    # fabricated block produces a self-consistent envelope + hash. That alone is
+    # never proof GitHub supplied the authorization: default re-verification
+    # compares the envelope against the current fetched comment and rejects it.
+    block = _auth_block()
+    env = oab.build_evidence_envelope(
+        repository="SemperSupra/AgentKVM2USB", issue=14,
+        comment_id="5180000000",
+        comment_url="https://github.com/SemperSupra/AgentKVM2USB/issues/14#issuecomment-5180000000",
+        issue_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB/issues/14",
+        repository_url="https://api.github.com/repos/SemperSupra/AgentKVM2USB",
+        comment_body=_auth_body(block),
+        github_author="mark-e-deyoung",
+        fetched_utc="2026-08-04T14:00:00+00:00",
+        authorization_block=block,
+    )
+    assert env["evidence_sha256"] == oab.sha256_evidence(env)
+    # The current GitHub comment for that id differs (e.g. no such authorization
+    # block was ever posted); re-verification must reject the fabricated record.
+    monkeypatch.setattr(oab, "fetch_issue_comment",
+                        lambda repo, cid: _auth_fetched(body="no authorization block posted"))
+    ok, reason = oab.verify_authorization(
+        env, experiment_id="official-app-x", repository="SemperSupra/AgentKVM2USB",
+        issue=14, human_authority="mark-e-deyoung", now_utc=_now(), refetch=True,
+    )
+    assert ok is False
+    assert "authorization block" in reason or "differs" in reason
+
+
+def test_ingest_authorization_parses_values_from_body():
+    fetched = _auth_fetched()
     env = oab.ingest_authorization(
-        repository="SemperSupra/AgentKVM2USB", issue=14, comment_id="5180000000",
-        comment_url=fetched["html_url"], experiment_id="official-app-x",
-        target="Wyse 5070", allowed_input_sequence=["capslock_down", "capslock_up"],
-        issued_utc="2026-08-04T14:00:00+00:00", expires_utc="2026-08-04T20:00:00+00:00",
-        fetched=fetched,
+        repository="SemperSupra/AgentKVM2USB", issue=14, comment_id="5180000000", fetched=fetched,
     )
     assert env["github_author"] == "mark-e-deyoung"
+    assert env["experiment_id"] == "official-app-x"
+    assert env["target"] == "Wyse 5070"
+    assert env["allowed_input_sequence"] == ["capslock_down", "capslock_up"]
+    assert env["authorization_block"]["authority"] == "issue #14 human authorization"
     assert env["evidence_sha256"] == oab.sha256_evidence(env)
+
+
+def test_ingest_authorization_rejects_plain_callable_fields():
+    # Caller-supplied metadata must never create or override authorization
+    # values; ingest requires a fetched comment body with a JSON block.
+    try:
+        oab.ingest_authorization(
+            repository="SemperSupra/AgentKVM2USB", issue=14, comment_id="1",
+            fetched={"id": "1", "body": "no block here", "user": "x",
+                     "html_url": "https://x", "issue_url": "https://x", "repository_url": "https://x"},
+        )
+        raise AssertionError("expected ingest to reject a body without a JSON authorization block")
+    except ValueError:
+        pass
 
 
 def test_no_live_bypass_subcommand_exists():
@@ -213,64 +417,95 @@ def test_cli_has_no_live_subcommand():
 # --------------------------------------------------------------------------- preflight interface selection
 
 
-def test_preflight_requires_explicit_interface_when_multiple(monkeypatch):
+def _preflight_env(monkeypatch, interfaces, usb_present=True, api_dir=".work/v/t", disk_free=20 * 1024**3):
     monkeypatch.setattr(oab, "find_usbpcap_cmd", lambda: "USBPcapCMD.exe")
-    monkeypatch.setattr(oab, "usbpcap_interfaces", lambda cmd: ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
+    monkeypatch.setattr(oab, "usbpcap_interfaces", lambda cmd: interfaces)
     monkeypatch.setattr(oab, "find_tshark", lambda: "tshark")
     monkeypatch.setattr(oab, "_detect_official_app", lambda: True)
-    monkeypatch.setattr(oab, "find_beagle_windows_api_dir", lambda root: Path(".work/v/t"))
+    monkeypatch.setattr(oab, "find_beagle_windows_api_dir", lambda root: Path(api_dir))
     monkeypatch.setattr(oab, "_detect_beagle_driver", lambda: True)
-    monkeypatch.setattr(oab, "_detect_kvm2usb_identity", lambda: {"vid": "2b77", "pid": "3661", "present": True})
+    monkeypatch.setattr(oab, "_detect_kvm2usb_identity",
+                        lambda: {"vid": "2b77", "pid": "3661", "present": usb_present})
+    monkeypatch.setattr(shutil, "disk_usage",
+                        lambda path: type("DiskUsage", (), {
+                            "total": 100 * 1024**3, "used": 100 * 1024**3 - disk_free, "free": disk_free})())
+
+
+def test_preflight_requires_interface_mapping_when_multiple(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
     pf = oab.preflight(host_interface=None, target_state_confirmed=True,
                        topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"})
     assert pf["selected_host_interface"] is None
-    assert any("explicit" in i for i in pf["issues"])
+    assert any("mapping" in i for i in pf["issues"])
     assert pf["live_disabled"] is True
 
 
-def test_preflight_honors_caller_host_interface(monkeypatch):
-    monkeypatch.setattr(oab, "find_usbpcap_cmd", lambda: "USBPcapCMD.exe")
-    monkeypatch.setattr(oab, "usbpcap_interfaces", lambda cmd: ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
-    monkeypatch.setattr(oab, "find_tshark", lambda: "tshark")
-    monkeypatch.setattr(oab, "_detect_official_app", lambda: True)
-    monkeypatch.setattr(oab, "find_beagle_windows_api_dir", lambda root: Path(".work/v/t"))
-    monkeypatch.setattr(oab, "_detect_beagle_driver", lambda: True)
-    monkeypatch.setattr(oab, "_detect_kvm2usb_identity", lambda: {"vid": "2b77", "pid": "3661", "present": True})
+def test_preflight_rejects_explicit_interface_without_mapping(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
     pf = oab.preflight(host_interface="\\\\.\\USBPcap2", target_state_confirmed=True,
                        topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"})
+    assert pf["selected_host_interface"] is None
+    assert any("no mapping evidence" in i for i in pf["issues"])
+
+
+def test_preflight_accepts_explicit_interface_with_mapping(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
+    mapping = {"\\\\.\\USBPcap2": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
+    pf = oab.preflight(host_interface="\\\\.\\USBPcap2", target_state_confirmed=True,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
     assert pf["selected_host_interface"] == "\\\\.\\USBPcap2"
-    # The generated USBPcap command uses the selected interface, not interfaces[0].
     assert "\\\\.\\USBPcap2" in pf["commands"]["usbpcap"]
 
 
-def test_preflight_single_verified_interface_selected(monkeypatch):
-    monkeypatch.setattr(oab, "find_usbpcap_cmd", lambda: "USBPcapCMD.exe")
-    monkeypatch.setattr(oab, "usbpcap_interfaces", lambda cmd: ["\\\\.\\USBPcap1"])
-    monkeypatch.setattr(oab, "find_tshark", lambda: "tshark")
-    monkeypatch.setattr(oab, "_detect_official_app", lambda: True)
-    monkeypatch.setattr(oab, "find_beagle_windows_api_dir", lambda root: Path(".work/v/t"))
-    monkeypatch.setattr(oab, "_detect_beagle_driver", lambda: True)
-    monkeypatch.setattr(oab, "_detect_kvm2usb_identity", lambda: {"vid": "2b77", "pid": "3661", "present": True})
+def test_preflight_auto_selects_single_mapped_interface(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
+    mapping = {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
     pf = oab.preflight(host_interface=None, target_state_confirmed=True,
-                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"})
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
     assert pf["selected_host_interface"] == "\\\\.\\USBPcap1"
     assert "\\\\.\\USBPcap1" in pf["commands"]["usbpcap"]
 
 
-def test_preflight_beagle_api_dir_never_evidence_root(monkeypatch):
-    monkeypatch.setattr(oab, "find_usbpcap_cmd", lambda: "USBPcapCMD.exe")
-    monkeypatch.setattr(oab, "usbpcap_interfaces", lambda cmd: ["\\\\.\\USBPcap1"])
-    monkeypatch.setattr(oab, "find_tshark", lambda: "tshark")
-    monkeypatch.setattr(oab, "_detect_official_app", lambda: True)
-    monkeypatch.setattr(oab, "find_beagle_windows_api_dir", lambda root: Path(".work/vendor/totalphase/python"))
-    monkeypatch.setattr(oab, "_detect_beagle_driver", lambda: True)
-    monkeypatch.setattr(oab, "_detect_kvm2usb_identity", lambda: {"vid": "2b77", "pid": "3661", "present": True})
-    pf = oab.preflight(host_interface="\\\\.\\USBPcap1", target_state_confirmed=True,
+def test_preflight_does_not_infer_from_global_presence(monkeypatch):
+    # Global device presence + one interface does NOT prove association.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"], usb_present=True)
+    pf = oab.preflight(host_interface=None, target_state_confirmed=True,
                        topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"})
+    assert pf["selected_host_interface"] is None
+    assert any("mapping" in i for i in pf["issues"])
+
+
+def test_preflight_beagle_api_dir_never_evidence_root(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"], api_dir=".work/vendor/totalphase/python")
+    mapping = {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
+    pf = oab.preflight(host_interface="\\\\.\\USBPcap1", target_state_confirmed=True,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
     assert Path(pf["detected"]["beagle_windows_api_dir"]) == Path(".work/vendor/totalphase/python")
     assert "--api-dir" in pf["commands"]["beagle"]
     assert str(Path(".work/vendor/totalphase/python")) in pf["commands"]["beagle"]
     assert str(Path(".work/evidence")) not in pf["commands"]["beagle"]
+
+
+def test_preflight_incomplete_topology_blocks(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    mapping = {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
+    pf = oab.preflight(host_interface="\\\\.\\USBPcap1", target_state_confirmed=True,
+                       topology={}, interface_mapping=mapping)
+    assert pf["ok"] is False
+    assert any("topology" in i for i in pf["issues"])
+
+
+def test_preflight_missing_target_state_confirmation_blocks(monkeypatch):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    mapping = {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
+    pf = oab.preflight(host_interface="\\\\.\\USBPcap1", target_state_confirmed=False,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
+    assert pf["ok"] is False
+    assert any("target-state" in i for i in pf["issues"])
 
 
 def test_preflight_incomplete_topology_blocks(monkeypatch):
@@ -302,7 +537,138 @@ def test_preflight_missing_drivers_reports_human_actions(monkeypatch):
     assert any("Beagle" in a for a in pf["human_actions"])
 
 
+def test_preflight_single_interface_positive_mapping_selected(monkeypatch):
+    # Exactly one interface is positively mapped to KVM2USB -> auto-selected.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    mapping = {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"}}
+    pf = oab.preflight(host_interface=None, target_state_confirmed=True,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
+    assert pf["selected_host_interface"] == "\\\\.\\USBPcap1"
+    assert pf["ok"] is True
+    assert not any("selected" in i for i in pf["issues"])  # no blocker for the successful auto-selection
+
+
+def test_preflight_explicit_wrong_interface_rejected(monkeypatch):
+    # The selected interface is mapped, but to a different device, not KVM2USB.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
+    mapping = {
+        "\\\\.\\USBPcap2": {"device_instance": "USB\\VID_1234&PID_5678\\some-other-device", "evidence": "pnp-root-hub"},
+    }
+    pf = oab.preflight(host_interface="\\\\.\\USBPcap2", target_state_confirmed=True,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
+    assert pf["selected_host_interface"] is None
+    assert any("no mapping evidence" in i for i in pf["issues"])
+
+
+def test_preflight_multiple_positive_mappings_require_explicit(monkeypatch):
+    # Two interfaces positively mapped -> no auto-select; explicit selection required.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1", "\\\\.\\USBPcap2"])
+    mapping = {
+        "\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM1", "evidence": "pnp-root-hub"},
+        "\\\\.\\USBPcap2": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM2", "evidence": "pnp-root-hub"},
+    }
+    pf = oab.preflight(host_interface=None, target_state_confirmed=True,
+                       topology={"cable_path": "x", "beagle_position": "y", "target_identity": "Wyse"},
+                       interface_mapping=mapping)
+    assert pf["selected_host_interface"] is None
+    assert any("explicit selection" in i for i in pf["issues"])
+
+
+# --------------------------------------------------------------------------- CLI no-live completeness
+
+
+def _cli_complete_args():
+    mapping = json.dumps({
+        "\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\KVM", "evidence": "pnp-root-hub"},
+    })
+    return [
+        "--host-interface", "\\\\.\\USBPcap1",
+        "--interface-mapping", mapping,
+        "--target-state-confirmed",
+        "--cable-path", "DP->KVM2USB->Wyse",
+        "--beagle-position", "target leg",
+        "--target-identity", "Wyse 5070",
+        "--official-app-driver", "detected",
+        "--beagle-driver", "detected",
+    ]
+
+
+def test_cli_preflight_complete_ok(monkeypatch, capsys):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    rc = oab.main(["preflight"] + _cli_complete_args())
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "HUMAN ACTION REQUIRED" not in out
+    report = json.loads(out)
+    assert report["ok"] is True
+    assert report["selected_host_interface"] == "\\\\.\\USBPcap1"
+    assert report["live_disabled"] is True
+
+
+def test_cli_preflight_incomplete_nonzero(monkeypatch, capsys):
+    # No interface mapping, no topology, no target-state confirmation.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    rc = oab.main(["preflight"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "HUMAN ACTION REQUIRED" in out
+
+
+def test_cli_build_manifest_blocked_when_preflight_incomplete(monkeypatch, capsys):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    rc = oab.main(["build-manifest"])
+    out = capsys.readouterr().out
+    assert rc == 2
+    payload = json.loads(out[: out.index("HUMAN ACTION REQUIRED")].strip())
+    assert payload.get("blocked") is True
+    assert "HUMAN ACTION REQUIRED" in out
+
+
+def test_cli_build_manifest_complete_valid(monkeypatch, capsys):
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    rc = oab.main(["build-manifest"] + _cli_complete_args())
+    out = capsys.readouterr().out
+    assert rc == 0
+    manifest = json.loads(out)
+    assert manifest["environment"]["host_interface"] == "\\\\.\\USBPcap1"
+    assert oab.validate_manifest(manifest) == []
+    assert manifest["authorization_record"] is None
+
+
+def test_cli_build_manifest_validates_nested_required_fields(monkeypatch, capsys):
+    # A complete preflight manifest must validate against the schema, including
+    # environment and capture nested required fields.
+    _preflight_env(monkeypatch, ["\\\\.\\USBPcap1"])
+    rc = oab.main(["build-manifest"] + _cli_complete_args())
+    out = capsys.readouterr().out
+    assert rc == 0
+    manifest = json.loads(out)
+    for field in oab.schema_section_required("environment"):
+        assert field in manifest["environment"]
+    for field in oab.schema_section_required("capture"):
+        assert field in manifest["capture"]
+
+
+def test_cli_build_manifest_blocked_when_nested_field_missing(monkeypatch, capsys):
+    # Remove a nested schema-required environment field from a built manifest;
+    # validate_manifest must flag it (exercises the nested schema contract).
+    manifest = _manifest()
+    del manifest["environment"]["topology"]
+    errors = oab.validate_manifest(manifest)
+    assert any("environment.topology" in e for e in errors)
+
+
 # --------------------------------------------------------------------------- timing comparison
+
+
+def _timing_session(marker_pairs):
+    """Build a timeline from (stage, timestamp) marker pairs plus optional rows."""
+    rows = []
+    for stage, ts in marker_pairs:
+        rows.append({"kind": "marker", "event": stage, "marker": stage, "timestamp_utc": ts})
+    return rows
 
 
 def test_timing_comparison_detects_host_to_target_delta():
@@ -319,9 +685,9 @@ def test_timing_comparison_detects_host_to_target_delta():
     ]
     res = oab.compare_sessions(official, agent, markers)
     t = res["timing"]
-    assert t["official"].get("host_to_target_data_or_nak") == pytest.approx(0.05, abs=0.01)
-    assert t["agent"].get("host_to_target_data_or_nak") == pytest.approx(0.5, abs=0.01)
-    assert t["first_timing_divergence"]["metric"] == "host_to_target_data_or_nak"
+    assert t["official"]["app_start"]["host_to_first_target_data_or_nak"] == pytest.approx(0.05, abs=0.01)
+    assert t["agent"]["app_start"]["host_to_first_target_data_or_nak"] == pytest.approx(0.5, abs=0.01)
+    assert t["first_timing_divergence"]["metric"] == "app_start.host_to_first_target_data_or_nak"
 
 
 def test_timing_comparison_within_tolerance_no_divergence():
@@ -338,6 +704,130 @@ def test_timing_comparison_within_tolerance_no_divergence():
     ]
     res = oab.compare_sessions(official, agent, markers, timing_tolerance=0.05)
     assert res["timing"]["first_timing_divergence"] is None
+
+
+def test_timing_all_metrics_measured_and_not_overwritten():
+    markers = ["app_start", "capslock_down", "capslock_up", "ordinary_key_down",
+               "ordinary_key_up", "all_keys_release"]
+    rows = [
+        {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:01.050Z", "marker": "app_start", "pid_name": "DATA0"},
+        {"kind": "marker", "event": "capslock_down", "marker": "capslock_down", "timestamp_utc": "2026-08-04T14:00:02.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:02.100Z", "marker": "capslock_down", "payload": "00 02"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:02.200Z", "marker": "capslock_down", "pid_name": "NAK"},
+        {"kind": "marker", "event": "capslock_up", "marker": "capslock_up", "timestamp_utc": "2026-08-04T14:00:03.000Z"},
+        {"kind": "marker", "event": "ordinary_key_down", "marker": "ordinary_key_down", "timestamp_utc": "2026-08-04T14:00:04.000Z"},
+        {"kind": "marker", "event": "ordinary_key_up", "marker": "ordinary_key_up", "timestamp_utc": "2026-08-04T14:00:05.000Z"},
+        {"kind": "marker", "event": "all_keys_release", "marker": "all_keys_release", "timestamp_utc": "2026-08-04T14:00:06.000Z"},
+    ]
+    m = oab.stage_timing_metrics(rows, marker_events=markers)
+    # app_start metrics
+    assert m["app_start"]["marker_to_first_host_report"] == pytest.approx(1.0, abs=0.01)
+    assert m["app_start"]["host_to_first_target_data_or_nak"] == pytest.approx(0.05, abs=0.01)
+    # capslock_down stage is not overwritten by later stages
+    assert m["capslock_down"]["host_to_first_target_data_or_nak"] == pytest.approx(0.1, abs=0.01)
+    # cross-marker intervals
+    assert m["capslock"]["down_to_up"] == pytest.approx(1.0, abs=0.01)
+    assert m["ordinary_key"]["down_to_up"] == pytest.approx(1.0, abs=0.01)
+    assert m["all_keys_release"]["last_key_release_to_all_keys_release"] == pytest.approx(1.0, abs=0.01)
+    # init to first target DATA across the full timeline (first DATA at 14:00:01.05)
+    assert m["init_to_first_target_data"] == pytest.approx(1.05, abs=0.01)
+
+
+def test_timing_missing_target_data_is_unavailable_not_zero():
+    markers = ["app_start"]
+    rows = [
+        {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+        # no DATA/NAK target transaction
+    ]
+    m = oab.stage_timing_metrics(rows, marker_events=markers)
+    assert m["app_start"].get("host_to_first_target_data_or_nak") is None
+    assert "init_to_first_target_data" not in m  # unavailable, not 0.0
+
+
+def test_timing_nak_instead_of_data():
+    markers = ["app_start"]
+    official = [
+        {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:01.100Z", "marker": "app_start", "pid_name": "DATA0"},
+    ]
+    agent = [
+        {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:01.100Z", "marker": "app_start", "pid_name": "NAK"},
+    ]
+    res = oab.compare_sessions(official, agent, markers, timing_tolerance=0.05)
+    # Same host-to-target timing (NAK treated like DATA/NAK), no timing divergence.
+    assert res["timing"]["first_timing_divergence"] is None
+    # But the target-count divergence is reported separately.
+    assert res["stages"]["app_start"]["target_divergence"] is not None
+
+
+def test_timing_multiple_divergences_first_is_chronological():
+    markers = ["app_start", "capslock_down"]
+    def session(first_target_ts):
+        return [
+            {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+            {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+            {"kind": "target_transaction", "timestamp_utc": first_target_ts, "marker": "app_start", "pid_name": "DATA0"},
+            {"kind": "marker", "event": "capslock_down", "marker": "capslock_down", "timestamp_utc": "2026-08-04T14:00:02.000Z"},
+            {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:02.100Z", "marker": "capslock_down", "payload": "00 02"},
+            {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:02.150Z", "marker": "capslock_down", "pid_name": "NAK"},
+        ]
+    official = session("2026-08-04T14:00:01.050Z")
+    agent = session("2026-08-04T14:00:01.200Z")  # differs in app_start host->target only
+    res = oab.compare_sessions(official, agent, markers, timing_tolerance=0.05)
+    t = res["timing"]
+    assert len(t["timing_divergences"]) >= 1
+    # The first divergence is the app_start host->target metric (chronologically first).
+    assert t["first_timing_divergence"]["metric"] == "app_start.host_to_first_target_data_or_nak"
+
+
+def test_timing_identical_sessions_no_divergence():
+    markers = ["app_start", "capslock_down", "capslock_up"]
+    rows = [
+        {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:01.100Z", "marker": "app_start", "pid_name": "DATA0"},
+        {"kind": "marker", "event": "capslock_down", "marker": "capslock_down", "timestamp_utc": "2026-08-04T14:00:02.000Z"},
+        {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:02.100Z", "marker": "capslock_down", "payload": "00 02"},
+        {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:02.200Z", "marker": "capslock_down", "pid_name": "NAK"},
+        {"kind": "marker", "event": "capslock_up", "marker": "capslock_up", "timestamp_utc": "2026-08-04T14:00:03.000Z"},
+    ]
+    res = oab.compare_sessions(rows, [dict(r) for r in rows], markers, timing_tolerance=0.05)
+    assert res["timing"]["timing_divergences"] == []
+    assert res["timing"]["first_timing_divergence"] is None
+    m = res["timing"]["official"]
+    # All promised metrics are present for the identical sessions, none zero-by-construction.
+    assert m["app_start"]["marker_to_first_host_report"] == pytest.approx(1.0, abs=0.01)
+    assert m["app_start"]["host_to_first_target_data_or_nak"] == pytest.approx(0.1, abs=0.01)
+    assert m["capslock_down"]["marker_to_first_host_transfer"] == pytest.approx(0.1, abs=0.01)
+    assert m["capslock_down"]["host_to_first_target_data_or_nak"] == pytest.approx(0.1, abs=0.01)
+    assert m["capslock"]["down_to_up"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_timing_missing_marker_is_unavailable_not_divergence():
+    # capslock_up marker is missing: the down->up interval is unavailable in both
+    # sessions and must not be reported as a timing divergence.
+    markers = ["app_start", "capslock_down", "capslock_up", "ordinary_key_down"]
+    def session():
+        return [
+            {"kind": "marker", "event": "app_start", "marker": "app_start", "timestamp_utc": "2026-08-04T14:00:00.000Z"},
+            {"kind": "host_transfer", "timestamp_utc": "2026-08-04T14:00:01.000Z", "marker": "app_start", "payload": "00 01"},
+            {"kind": "target_transaction", "timestamp_utc": "2026-08-04T14:00:01.100Z", "marker": "app_start", "pid_name": "DATA0"},
+            {"kind": "marker", "event": "capslock_down", "marker": "capslock_down", "timestamp_utc": "2026-08-04T14:00:02.000Z"},
+            # no capslock_up marker
+            {"kind": "marker", "event": "ordinary_key_down", "marker": "ordinary_key_down", "timestamp_utc": "2026-08-04T14:00:04.000Z"},
+        ]
+    official = session()
+    agent = [dict(r) for r in session()]
+    res = oab.compare_sessions(official, agent, markers, timing_tolerance=0.05)
+    m = res["timing"]["official"]
+    assert "down_to_up" not in (m.get("capslock") or {})
+    assert res["timing"]["timing_divergences"] == []
 
 
 # --------------------------------------------------------------------------- correlation / capture commands

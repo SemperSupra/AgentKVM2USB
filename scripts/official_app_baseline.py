@@ -137,12 +137,19 @@ def schema_required_top_level(repo_root: Optional[Path] = None) -> List[str]:
     return load_schema(repo_root).get("required", [])
 
 
+def schema_section_required(section: str, repo_root: Optional[Path] = None) -> List[str]:
+    """Required fields of one schema section (experiment, environment, capture,
+    authorization_record), derived from the schema rather than a hand-maintained
+    duplicate list."""
+    schema = load_schema(repo_root)
+    sec = (schema.get("fields") or {}).get(section) or {}
+    return sec.get("required", [])
+
+
 def schema_auth_required_fields(repo_root: Optional[Path] = None) -> List[str]:
     """Authorization-record required fields derived from the schema, not a
     hand-maintained duplicate list."""
-    schema = load_schema(repo_root)
-    auth = (schema.get("fields") or {}).get("authorization_record") or {}
-    return auth.get("required", [])
+    return schema_section_required("authorization_record", repo_root)
 
 
 # --------------------------------------------------------------------------- correlation / timestamps
@@ -483,55 +490,101 @@ def _ts_seconds(value: Any) -> Optional[float]:
     return parsed.timestamp()
 
 
+def _find_first(rows: List[Dict[str, Any]], predicate) -> Optional[float]:
+    """Return the earliest timestamp (epoch seconds) in ``rows`` matching a
+    predicate, or None when unavailable."""
+    for r in rows:
+        if predicate(r):
+            ts = _ts_seconds(r.get("timestamp_utc"))
+            if ts is not None:
+                return ts
+    return None
+
+
+def _is_target_data_or_nak(row: Dict[str, Any]) -> bool:
+    return row.get("kind") == "target_transaction" and (
+        row.get("class_") in ("DATA", "HANDSHAKE")
+        or row.get("pid_name") in ("DATA0", "DATA1", "DATA2", "MDATA", "NAK")
+    )
+
+
 def stage_timing_metrics(
     rows: List[Dict[str, Any]],
     *,
     marker_events: List[str],
     tolerance: float = DEFAULT_TIMING_TOLERANCE_SECONDS,
 ) -> Dict[str, Any]:
-    """Compute per-stage relative timing metrics for a single session.
+    """Compute nested per-stage relative timing metrics for a single session.
 
-    Returns a dict of named timing metrics measured in seconds:
-    ``init_to_first_report``, ``marker_to_host_transfer``,
-    ``host_to_target_data_or_nak``, ``report_down_to_up``, and
-    ``all_keys_release`` (delta to the following stage when present).
+    Metrics are stored under unique keys so earlier stages are never overwritten.
+    A metric value is present only when both endpoints are measured; unavailable
+    evidence is ``None`` and is never confused with a measured zero duration.
+
+    Measured pairs (seconds):
+    - ``app_start.marker_to_first_host_report``
+    - ``<stage>.marker_to_first_host_transfer``
+    - ``<stage>.host_to_first_target_data_or_nak``
+    - ``capslock.down_to_up``
+    - ``ordinary_key.down_to_up``
+    - ``all_keys_release.last_key_release_to_all_keys_release``
+    - ``init_to_first_target_data`` (across the full timeline, when present)
     """
     metrics: Dict[str, Any] = {}
     buckets = align_by_marker(rows, marker_events)
-    for stage in ("app_start", "capslock_down", "ordinary_key_down", "all_keys_release"):
+
+    def marker_ts(name: str) -> Optional[float]:
+        for r in rows:
+            if r.get("kind") == "marker" and (r.get("event") or r.get("marker")) == name:
+                ts = _ts_seconds(r.get("timestamp_utc"))
+                if ts is not None:
+                    return ts
+        return None
+
+    # app_start marker -> first host report
+    app_start_ts = marker_ts("app_start")
+    first_host = _find_first(rows, lambda r: r.get("kind") == "host_transfer")
+    if app_start_ts is not None and first_host is not None:
+        metrics.setdefault("app_start", {})["marker_to_first_host_report"] = round(first_host - app_start_ts, 6)
+
+    # init (first app_start marker) -> first target DATA across the full timeline
+    init_ts = app_start_ts
+    first_data = _find_first(rows, _is_target_data_or_nak)
+    if init_ts is not None and first_data is not None:
+        metrics["init_to_first_target_data"] = round(first_data - init_ts, 6)
+
+    # Per-stage: marker -> first host transfer; host transfer -> first DATA/NAK
+    for stage in marker_events:
         bucket = buckets.get(stage, [])
-        timestamps = [_ts_seconds(r.get("timestamp_utc")) for r in bucket]
-        timestamps = [t for t in timestamps if t is not None]
-        if stage == "app_start" and timestamps:
-            metrics["init_to_first_report"] = round(timestamps[0] - timestamps[0], 6)
-        if stage == "capslock_down" and timestamps:
-            down = timestamps[0]
-            up = None
-            for r in bucket:
-                if r.get("marker") == "capslock_up":
-                    up = _ts_seconds(r.get("timestamp_utc"))
-            metrics["report_down_to_up"] = round((up - down), 6) if up else None
-        # host-transfer to target DATA/NAK within the stage
-        host_ts = None
-        target_ts = None
-        for r in bucket:
-            if r.get("kind") == "host_transfer" and host_ts is None:
-                host_ts = _ts_seconds(r.get("timestamp_utc"))
-            elif r.get("kind") == "target_transaction" and target_ts is None:
-                if r.get("class_") in ("DATA", "HANDSHAKE") or r.get("pid_name") in ("DATA0", "DATA1", "DATA2", "MDATA", "NAK"):
-                    target_ts = _ts_seconds(r.get("timestamp_utc"))
+        stage_ts = marker_ts(stage)
+        first_host_in_stage = _find_first(bucket, lambda r: r.get("kind") == "host_transfer")
+        if stage_ts is not None and first_host_in_stage is not None:
+            metrics.setdefault(stage, {})["marker_to_first_host_transfer"] = round(
+                first_host_in_stage - stage_ts, 6)
+        host_ts = _find_first(bucket, lambda r: r.get("kind") == "host_transfer")
+        target_ts = _find_first(bucket, _is_target_data_or_nak)
         if host_ts is not None and target_ts is not None:
-            metrics["host_to_target_data_or_nak"] = round(target_ts - host_ts, 6)
-        # marker to first host transfer in the stage
-        marker_ts = None
-        first_host_ts = None
-        for r in bucket:
-            if r.get("kind") == "marker" and marker_ts is None:
-                marker_ts = _ts_seconds(r.get("timestamp_utc"))
-            elif r.get("kind") == "host_transfer" and first_host_ts is None:
-                first_host_ts = _ts_seconds(r.get("timestamp_utc"))
-        if marker_ts is not None and first_host_ts is not None:
-            metrics["marker_to_host_transfer"] = round(first_host_ts - marker_ts, 6)
+            metrics.setdefault(stage, {})["host_to_first_target_data_or_nak"] = round(
+                target_ts - host_ts, 6)
+
+    # Cross-marker intervals (search the full timeline, not a single bucket)
+    capslock_down = marker_ts("capslock_down")
+    capslock_up = marker_ts("capslock_up")
+    if capslock_down is not None and capslock_up is not None:
+        metrics.setdefault("capslock", {})["down_to_up"] = round(capslock_up - capslock_down, 6)
+    ordinary_down = marker_ts("ordinary_key_down")
+    ordinary_up = marker_ts("ordinary_key_up")
+    if ordinary_down is not None and ordinary_up is not None:
+        metrics.setdefault("ordinary_key", {})["down_to_up"] = round(ordinary_up - ordinary_down, 6)
+    all_release = marker_ts("all_keys_release")
+    last_key_release = None
+    for name in ("ordinary_key_up", "capslock_up"):
+        ts = marker_ts(name)
+        if ts is not None and (last_key_release is None or ts > last_key_release):
+            last_key_release = ts
+    if last_key_release is not None and all_release is not None:
+        metrics.setdefault("all_keys_release", {})["last_key_release_to_all_keys_release"] = round(
+            all_release - last_key_release, 6)
+
     metrics["tolerance_seconds"] = tolerance
     return metrics
 
@@ -542,23 +595,47 @@ def compare_timing(
     marker_events: List[str],
     tolerance: float = DEFAULT_TIMING_TOLERANCE_SECONDS,
 ) -> Dict[str, Any]:
-    """Compare official vs agent per-stage timing metrics.
+    """Compare official vs agent timing metrics.
 
-    Reports the first timing divergence independently of payload/endpoint/
-    transfer-shape/target-count divergence. A metric diverges when the absolute
-    delta exceeds ``tolerance`` seconds.
+    Metrics are compared independently with the configured tolerance. Only
+    metrics present in both sessions are compared; unavailable evidence is
+    reported but not treated as a divergence. Returns the chronologically first
+    timing divergence (by stage order / metric definition order).
     """
     official_metrics = stage_timing_metrics(official_rows, marker_events=marker_events, tolerance=tolerance)
     agent_metrics = stage_timing_metrics(agent_rows, marker_events=marker_events, tolerance=tolerance)
+
     divergences: List[Dict[str, Any]] = []
-    for key in ("init_to_first_report", "marker_to_host_transfer",
-                "host_to_target_data_or_nak", "report_down_to_up", "all_keys_release"):
-        o = official_metrics.get(key)
-        a = agent_metrics.get(key)
+    metric_paths: List[Tuple[str, str]] = []
+    # Chronological order: app-start window first, then per-stage windows in
+    # marker order, then the cross-marker release intervals.
+    metric_paths.append(("app_start", "marker_to_first_host_report"))
+    metric_paths.append(("app_start", "host_to_first_target_data_or_nak"))
+    for stage in marker_events:
+        if stage == "app_start":
+            continue
+        metric_paths.append((stage, "marker_to_first_host_transfer"))
+        metric_paths.append((stage, "host_to_first_target_data_or_nak"))
+    metric_paths.append(("", "init_to_first_target_data"))
+    metric_paths.append(("capslock", "down_to_up"))
+    metric_paths.append(("ordinary_key", "down_to_up"))
+    metric_paths.append(("all_keys_release", "last_key_release_to_all_keys_release"))
+
+    for section, metric in metric_paths:
+        if section:
+            o = (official_metrics.get(section) or {}).get(metric)
+            a = (agent_metrics.get(section) or {}).get(metric)
+        else:
+            o = official_metrics.get(metric)
+            a = agent_metrics.get(metric)
         if o is None or a is None:
             continue
         if abs(o - a) > tolerance:
-            divergences.append({"metric": key, "official_s": o, "agent_s": a, "delta_s": round(o - a, 6)})
+            divergences.append({
+                "metric": f"{section}.{metric}" if section else metric,
+                "official_s": o, "agent_s": a, "delta_s": round(o - a, 6),
+            })
+
     return {
         "official": official_metrics,
         "agent": agent_metrics,
@@ -693,10 +770,12 @@ def canonicalize_evidence(envelope: Dict[str, Any]) -> bytes:
     the SHA-256 is reproducible and independent of dict ordering.
     """
     core = {k: envelope.get(k) for k in (
-        "repository", "issue", "comment_id", "comment_url", "comment_body",
-        "github_author", "fetched_utc", "experiment_id", "target",
-        "allowed_input_sequence", "issued_utc", "expires_utc",
+        "repository", "issue", "comment_id", "comment_url", "issue_url",
+        "repository_url", "comment_body", "github_author", "fetched_utc",
+        "experiment_id", "target", "allowed_input_sequence", "issued_utc",
+        "expires_utc", "authority",
     )}
+    core["authorization_block"] = envelope.get("authorization_block")
     return json.dumps(core, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
@@ -707,12 +786,16 @@ def sha256_evidence(envelope: Dict[str, Any]) -> str:
 def fetch_issue_comment(repository: str, comment_id: str) -> Dict[str, Any]:
     """Fetch the exact issue comment through authenticated ``gh api``.
 
-    Raises RuntimeError on failure. No live capture is involved.
+    Returns the full comment including id, body, html_url, issue_url,
+    repository_url, author, created_at, and updated_at. Raises RuntimeError on
+    failure. No live capture is involved.
     """
     url = f"repos/{repository}/issues/comments/{comment_id}"
     try:
         result = subprocess.run(
-            ["gh", "api", url, "--jq", "{id, body, html_url, user: .user.login, created_at}"],
+            ["gh", "api", url, "--jq",
+             "{id, body, html_url, issue_url, repository_url, created_at, updated_at, "
+             "user: .user.login}"],
             capture_output=True, text=True, timeout=30, check=False,
         )
     except Exception as exc:
@@ -722,37 +805,89 @@ def fetch_issue_comment(repository: str, comment_id: str) -> Dict[str, Any]:
     return json.loads(result.stdout)
 
 
+_ISSUE_URL_RE = re.compile(
+    r"(?:repos/|github\.com/)(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<issue>\d+)"
+)
+
+
+def _issue_url_matches(issue_url: str, repository: str, issue: int) -> bool:
+    """Return True when ``issue_url`` identifies the same repository and issue.
+
+    Accepts both the GitHub API issue URL (``/repos/{owner}/{repo}/issues/{n}``)
+    and the html issue URL (``github.com/{owner}/{repo}/issues/{n}``). An empty
+    or unparseable URL never matches.
+    """
+    m = _ISSUE_URL_RE.search(issue_url or "")
+    if not m:
+        return False
+    expected = repository.split("/")
+    return [m.group("owner"), m.group("repo")] == expected and int(m.group("issue")) == int(issue)
+
+
+def parse_authorization_block(body: str) -> Dict[str, Any]:
+    """Parse the single machine-readable fenced JSON authorization block from a
+    fetched comment body.
+
+    The block must contain repository, issue, experiment_id, target,
+    allowed_input_sequence, issued_utc, expires_utc, and authority. Raises
+    ValueError when the block is absent or malformed.
+    """
+    fences = re.findall(r"```json\s*(\{.*?\})\s*```", body, flags=re.DOTALL)
+    if not fences:
+        raise ValueError("no fenced JSON authorization block found in the comment body")
+    try:
+        block = json.loads(fences[0])
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"authorization block is not valid JSON: {exc}") from exc
+    required = ("repository", "issue", "experiment_id", "target",
+                "allowed_input_sequence", "issued_utc", "expires_utc", "authority")
+    for field in required:
+        value = block.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(f"authorization block missing required field: {field}")
+    if not isinstance(block.get("allowed_input_sequence"), list) or not block["allowed_input_sequence"]:
+        raise ValueError("authorization block allowed_input_sequence must be a non-empty list")
+    return block
+
+
 def build_evidence_envelope(
     *,
     repository: str,
     issue: int,
     comment_id: str,
     comment_url: str,
+    issue_url: str,
+    repository_url: str,
     comment_body: str,
     github_author: str,
     fetched_utc: str,
-    experiment_id: str,
-    target: str,
-    allowed_input_sequence: List[str],
-    issued_utc: str,
-    expires_utc: str,
+    authorization_block: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Build a cached evidence envelope produced from a GitHub fetch (or a
-    supplied fetch result). The envelope carries a SHA-256 of the canonicalized
-    evidence so a later verify can confirm it was not tampered with."""
+    """Build a cached evidence envelope from a fetched comment and its parsed
+    authorization block.
+
+    All authorized values are taken from ``authorization_block`` (parsed from
+    the fetched comment body). Caller values must never be mixed in here. The
+    envelope stores the raw fetched evidence, the parsed block, fetched UTC, and
+    a SHA-256 hash of the canonicalized evidence.
+    """
     envelope = {
         "repository": repository,
         "issue": issue,
         "comment_id": comment_id,
         "comment_url": comment_url,
+        "issue_url": issue_url,
+        "repository_url": repository_url,
         "comment_body": comment_body,
         "github_author": github_author,
         "fetched_utc": fetched_utc,
-        "experiment_id": experiment_id,
-        "target": target,
-        "allowed_input_sequence": list(allowed_input_sequence),
-        "issued_utc": issued_utc,
-        "expires_utc": expires_utc,
+        "authorization_block": authorization_block,
+        "experiment_id": authorization_block["experiment_id"],
+        "target": authorization_block["target"],
+        "allowed_input_sequence": list(authorization_block["allowed_input_sequence"]),
+        "issued_utc": authorization_block["issued_utc"],
+        "expires_utc": authorization_block["expires_utc"],
+        "authority": authorization_block["authority"],
     }
     envelope["evidence_sha256"] = sha256_evidence(envelope)
     return envelope
@@ -763,39 +898,51 @@ def ingest_authorization(
     repository: str,
     issue: int,
     comment_id: str,
-    comment_url: str,
-    experiment_id: str,
-    target: str,
-    allowed_input_sequence: List[str],
-    issued_utc: str,
-    expires_utc: str,
     fetched: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Ingest an authorization by fetching the exact issue comment via gh api
-    (or consuming a supplied fetch result) and returning a hash-pinned envelope.
+    and parsing every authorized value from the comment body.
 
-    A caller-assembled dictionary that has not been fetched is rejected.
+    Caller arguments may only name the repository/issue/comment to fetch; they
+    never supply or override authorization values. A caller-assembled dictionary
+    cannot be used here because all values come from the fetched comment body.
     """
     if fetched is None:
         fetched = fetch_issue_comment(repository, comment_id)
+    if not isinstance(fetched, dict):
+        raise ValueError("fetched comment evidence must be a dict from gh api")
     comment_body = fetched.get("body") or ""
     github_author = fetched.get("user") or ""
+    fetched_id = str(fetched.get("id") or "")
+    if not fetched_id:
+        raise ValueError("fetched comment has no id; cannot establish comment identity")
+    if str(comment_id) != fetched_id:
+        raise ValueError(
+            f"fetched comment id {fetched_id!r} does not match the requested comment id {comment_id!r}"
+        )
     fetched_url = fetched.get("html_url") or ""
-    if comment_url and fetched_url and comment_url != fetched_url:
-        raise ValueError("comment_url does not match the fetched GitHub comment URL")
+    issue_url = fetched.get("issue_url") or ""
+    repository_url = fetched.get("repository_url") or ""
+    if repository_url and repository_url.rstrip("/").split("/")[-2:] != repository.split("/"):
+        raise ValueError("repository_url does not match the requested repository")
+    if issue_url and not _issue_url_matches(issue_url, repository, issue):
+        raise ValueError(f"issue_url {issue_url!r} does not identify {repository} issue {issue}")
+    block = parse_authorization_block(comment_body)
+    if str(block.get("repository")) != repository:
+        raise ValueError("authorization block repository does not match the requested repository")
+    if int(block.get("issue")) != int(issue):
+        raise ValueError("authorization block issue does not match the requested issue")
     return build_evidence_envelope(
         repository=repository,
         issue=issue,
-        comment_id=str(fetched.get("id") or comment_id),
-        comment_url=fetched_url or comment_url,
+        comment_id=fetched_id,
+        comment_url=fetched_url,
+        issue_url=issue_url,
+        repository_url=repository_url,
         comment_body=comment_body,
         github_author=github_author,
         fetched_utc=utc_timestamp(),
-        experiment_id=experiment_id,
-        target=target,
-        allowed_input_sequence=allowed_input_sequence,
-        issued_utc=issued_utc,
-        expires_utc=expires_utc,
+        authorization_block=block,
     )
 
 
@@ -807,16 +954,26 @@ def verify_authorization(
     issue: int,
     human_authority: str,
     now_utc: Optional[dt.datetime] = None,
+    refetch: bool = True,
+    fetched: Optional[Dict[str, Any]] = None,
+    expected_comment_id: Optional[str] = None,
+    expected_target: Optional[str] = None,
+    expected_allowed_input_sequence: Optional[List[str]] = None,
+    expected_issued_utc: Optional[str] = None,
+    expected_expires_utc: Optional[str] = None,
+    expected_issue_url: Optional[str] = None,
 ) -> Tuple[bool, str]:
-    """Validate a cached evidence envelope against GitHub-derived evidence.
+    """Verify a cached evidence envelope against GitHub evidence.
 
-    Confirms: repository/issue/comment agreement; the fetched comment body
-    explicitly authorizes the exact experiment ID; target and allowed input
-    sequence match; the authorization has not expired; the GitHub author matches
-    the recorded human authority; and the envelope hash is valid.
-
-    A fabricated caller-assembled dictionary without a valid hash-pinned
-    envelope is rejected.
+    By default, re-fetches the current comment via gh api and compares it to the
+    cached envelope. ``refetch=False`` uses the cached envelope only and must be
+    explicitly identified as cached evidence. Confirms repository, issue URL,
+    comment ID/URL, GitHub author, experiment ID, target, exact allowed input
+    sequence, issued/expiry UTC, and the envelope hash — all derived from the
+    parsed comment body. The ``expected_*`` arguments are caller-supplied expected
+    values used only for comparison; they never create or override authorization
+    values. An expected value that does not match the comment-derived value fails
+    verification.
     """
     if not isinstance(envelope, dict):
         return False, "no cached evidence envelope"
@@ -824,33 +981,75 @@ def verify_authorization(
         return False, "repository mismatch"
     if int(envelope.get("issue") or 0) != int(issue):
         return False, "issue mismatch"
-    if not envelope.get("comment_id") or not envelope.get("comment_url"):
+    if not envelope.get("comment_id"):
         return False, "missing comment identity"
-    body = str(envelope.get("comment_body") or "")
-    if experiment_id not in body:
-        return False, "fetched comment body does not authorize the exact experiment_id"
-    if str(envelope.get("experiment_id")) != experiment_id:
-        return False, "envelope experiment_id mismatch"
-    if str(envelope.get("target")) != str(envelope.get("target")):
-        pass  # target recorded in envelope; matched below by caller intent
-    expected_sequence = sorted(str(x) for x in (envelope.get("allowed_input_sequence") or []))
-    if not expected_sequence:
-        return False, "allowed input sequence is empty"
+    if expected_comment_id is not None and str(envelope.get("comment_id")) != str(expected_comment_id):
+        return False, (
+            f"envelope comment id {envelope.get('comment_id')!r} "
+            f"!= expected comment id {expected_comment_id!r}"
+        )
+    envelope_issue_url = envelope.get("issue_url") or ""
+    if envelope_issue_url and not _issue_url_matches(envelope_issue_url, repository, issue):
+        return False, f"envelope issue_url {envelope_issue_url!r} does not identify {repository} issue {issue}"
+    if expected_issue_url is not None and envelope_issue_url != expected_issue_url:
+        return False, f"envelope issue_url {envelope_issue_url!r} != expected {expected_issue_url!r}"
+    block = envelope.get("authorization_block")
+    if not isinstance(block, dict):
+        return False, "no parsed authorization block in envelope"
+    if str(block.get("repository")) != str(envelope.get("repository")):
+        return False, "authorization block repository differs from envelope repository"
+    if int(block.get("issue") or 0) != int(envelope.get("issue") or 0):
+        return False, "authorization block issue differs from envelope issue"
+    if str(block.get("experiment_id")) != experiment_id:
+        return False, f"comment authorization experiment_id {block.get('experiment_id')!r} != {experiment_id!r}"
+    if not block.get("target") or not block.get("allowed_input_sequence"):
+        return False, "authorization block target/sequence is empty"
+    if expected_target is not None and str(block.get("target")) != expected_target:
+        return False, f"authorization target {block.get('target')!r} != expected {expected_target!r}"
+    if expected_allowed_input_sequence is not None:
+        expected_seq = sorted(str(x) for x in expected_allowed_input_sequence)
+        actual_seq = sorted(str(x) for x in block.get("allowed_input_sequence") or [])
+        if actual_seq != expected_seq:
+            return False, "authorization allowed input sequence does not match the expected sequence"
+    if expected_issued_utc is not None and str(block.get("issued_utc")) != expected_issued_utc:
+        return False, f"authorization issued_utc {block.get('issued_utc')!r} != expected {expected_issued_utc!r}"
+    if expected_expires_utc is not None and str(block.get("expires_utc")) != expected_expires_utc:
+        return False, f"authorization expires_utc {block.get('expires_utc')!r} != expected {expected_expires_utc!r}"
     if human_authority and str(envelope.get("github_author")) != human_authority:
         return False, f"github author {envelope.get('github_author')!r} != recorded human authority {human_authority!r}"
+
+    if refetch:
+        current = fetched or fetch_issue_comment(repository, str(envelope.get("comment_id")))
+        if str(current.get("id") or "") != str(envelope.get("comment_id")):
+            return False, "current GitHub comment id differs from cached evidence"
+        if (current.get("html_url") or "") != (envelope.get("comment_url") or ""):
+            return False, "current GitHub comment url differs from cached evidence"
+        if (current.get("user") or "") != (envelope.get("github_author") or ""):
+            return False, "current GitHub author differs from cached evidence"
+        if (current.get("body") or "") != (envelope.get("comment_body") or ""):
+            return False, "current GitHub comment body differs from cached evidence"
+        # The re-fetched body must parse to the same authorization values.
+        try:
+            current_block = parse_authorization_block(current.get("body") or "")
+        except ValueError:
+            return False, "current GitHub comment does not contain a valid authorization block"
+        if current_block != block:
+            return False, "current GitHub authorization block differs from cached evidence"
+
     now = now_utc or dt.datetime.now(dt.timezone.utc)
     try:
-        issued = dt.datetime.fromisoformat(str(envelope["issued_utc"]).replace("Z", "+00:00"))
-        expires = dt.datetime.fromisoformat(str(envelope["expires_utc"]).replace("Z", "+00:00"))
+        issued = dt.datetime.fromisoformat(str(block["issued_utc"]).replace("Z", "+00:00"))
+        expires = dt.datetime.fromisoformat(str(block["expires_utc"]).replace("Z", "+00:00"))
     except (KeyError, ValueError):
         return False, "authorization timestamps must be ISO-8601"
     if now < issued:
         return False, "authorization not yet valid"
     if now >= expires:
-        return False, f"authorization expired at {envelope['expires_utc']}"
+        return False, f"authorization expired at {block['expires_utc']}"
     if sha256_evidence(envelope) != envelope.get("evidence_sha256"):
         return False, "evidence envelope hash mismatch; tampered or fabricated record"
-    return True, "authorization evidence valid"
+    suffix = "" if refetch else " (cached evidence — not re-fetched from GitHub)"
+    return True, "authorization evidence valid" + suffix
 
 
 # --------------------------------------------------------------------------- experiment manifest / gates
@@ -927,26 +1126,64 @@ def build_manifest(
 
 
 def validate_manifest(manifest: Dict[str, Any], repo_root: Optional[Path] = None) -> List[str]:
-    """Validate a manifest against the schema-derived required fields."""
+    """Validate a manifest against the schema-derived required fields.
+
+    Validates the top-level required fields and the nested schema-required
+    fields of ``experiment``, ``environment``, ``capture``, and — when present
+    and non-null — ``authorization_record``. Every nested required list comes
+    from the schema, not a hand-maintained duplicate.
+    """
     errors: List[str] = []
     for field in schema_required_top_level(repo_root):
         if field not in manifest:
             errors.append(f"manifest missing required top-level field: {field}")
-    experiment = manifest.get("experiment") or {}
+
+    def check_section(section: str) -> Dict[str, Any]:
+        value = manifest.get(section)
+        if not isinstance(value, dict):
+            errors.append(f"{section} must be an object")
+            return {}
+        for field in schema_section_required(section, repo_root):
+            if field not in value:
+                errors.append(f"{section}.{field} is required")
+        return value
+
+    experiment = check_section("experiment")
     for field in ("id", "objective", "operator", "date", "git_commit", "recovery_base_head"):
         if not experiment.get(field):
             errors.append(f"experiment.{field} is required")
-    capture = manifest.get("capture") or {}
+
+    environment = check_section("environment")
+    # host_interface and beagle_windows_api_dir are schema-nullable, so only key
+    # presence is checked above; the object fields must be meaningful when the
+    # experiment is to be runnable.
+    for field in ("usb_identity", "topology", "driver_state"):
+        if environment.get(field) is None:
+            errors.append(f"environment.{field} must not be null")
+
+    capture = check_section("capture")
     if not capture.get("correlation_id"):
         errors.append("capture.correlation_id is required")
     markers = capture.get("event_markers") or []
-    required_markers = {"app_start", "device_selected", "target_enumeration",
-                        "capslock_down", "capslock_up", "ordinary_key_down",
-                        "ordinary_key_up", "all_keys_release", "app_close"}
+    required_markers = {m["event"] for m in DEFAULT_MARKERS}
     marker_names = {m.get("event") for m in markers if isinstance(m, dict)}
     missing = sorted(required_markers - marker_names)
     if missing:
         errors.append(f"capture.event_markers missing required markers: {', '.join(missing)}")
+    for m in markers:
+        if isinstance(m, dict):
+            for field in ("event", "description"):
+                if not m.get(field):
+                    errors.append(f"capture.event_markers item missing {field}: {m!r}")
+
+    auth = manifest.get(AUTHORIZATION_RECORD_FIELD)
+    if auth is not None:
+        if not isinstance(auth, dict):
+            errors.append("authorization_record must be an object when present")
+        else:
+            for field in schema_auth_required_fields(repo_root):
+                if not auth.get(field):
+                    errors.append(f"authorization_record.{field} is required")
     return errors
 
 
@@ -984,6 +1221,31 @@ def _detect_beagle_driver() -> bool:
         return False
 
 
+def _mapping_entry_maps_kvm2usb(
+    entry: Any, usb_identity: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Return True when a mapping record associates an interface with the
+    KVM2USB device specifically, not merely with some USB device.
+
+    A record is accepted when it explicitly declares the KVM2USB mapping
+    (``kvm2usb: true`` or ``device: kvm2usb``, e.g. a reviewed mapping record)
+    or when its ``device_instance`` carries the KVM2USB VID/PID, matched
+    case-insensitively against the detected identity and defaulting to the known
+    Epiphan/KVM2USB IDs. Device-identity detection alone is never treated as
+    interface association.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("kvm2usb") is True or str(entry.get("device", "")).strip().lower() == "kvm2usb":
+        return True
+    instance = str(entry.get("device_instance") or "").upper()
+    if not instance:
+        return False
+    vid = str((usb_identity or {}).get("vid") or EPIPHAN_VID).upper()
+    pid = str((usb_identity or {}).get("pid") or KVM2USB3_PID).upper()
+    return f"VID_{vid}" in instance and f"PID_{pid}" in instance
+
+
 def preflight(
     *,
     repo_root: Optional[Path] = None,
@@ -993,14 +1255,19 @@ def preflight(
     target_state_confirmed: bool = False,
     topology: Optional[Dict[str, Any]] = None,
     driver_state: Optional[Dict[str, Any]] = None,
+    interface_mapping: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """No-live workstation preflight/orchestration.
 
     Detects tools, drivers, USB identities, interfaces, disk space, topology,
-    Beagle position, and target-state confirmation. Requires an explicitly
-    selected USBPcap interface (never ``interfaces[0]``) unless exactly one
-    verified interface contains the KVM2USB VID/PID. Returns HUMAN ACTION
-    REQUIRED until all required fields are complete.
+    Beagle position, and target-state confirmation.
+
+    Interface selection is evidence-backed: an explicit ``host_interface`` is
+    accepted only when ``interface_mapping`` associates it with the KVM2USB
+    device (a PnP/extcap/mapping record), and auto-selection happens only when
+    exactly one interface is positively mapped. A global device-presence check
+    alone never proves association. Returns HUMAN ACTION REQUIRED until all
+    required fields are complete.
     """
     root = (repo_root or Path(__file__).resolve().parents[1]).resolve()
     usbpcap_cmd = find_usbpcap_cmd()
@@ -1011,6 +1278,18 @@ def preflight(
     beagle_api_dir = find_beagle_windows_api_dir(root)
     beagle_driver_present = _detect_beagle_driver()
     usb_identity = _detect_kvm2usb_identity()
+
+    # interface_mapping maps a USBPcap interface to the KVM2USB device instance.
+    # Example: {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\...", "evidence": "pnp-root-hub"}}
+    # An interface is positively mapped only when the record associates it with
+    # the KVM2USB device (matching VID/PID/instance or an explicit reviewed
+    # mapping marker); a record for some other device never counts.
+    mapping = interface_mapping or {}
+    mapped_interfaces = [
+        name for name, entry in mapping.items()
+        if _mapping_entry_maps_kvm2usb(entry, usb_identity)
+    ]
+    identity_present = bool(usb_identity and usb_identity.get("present"))
 
     issues: List[str] = []
     if not usbpcap_cmd:
@@ -1026,20 +1305,31 @@ def preflight(
     if disk.free < 2 * 1024 * 1024 * 1024:
         issues.append(f"insufficient disk space: {disk.free} bytes free")
 
-    # Interface selection: explicit selection is required unless exactly one
-    # verified interface contains the KVM2USB VID/PID.
+    # Interface selection requires mapping evidence associating the interface
+    # with the KVM2USB device; device presence alone is never sufficient.
     selected_interface = None
     if host_interface:
-        selected_interface = host_interface
-        if interfaces and host_interface not in interfaces:
-            issues.append(f"explicit host_interface {host_interface!r} is not in the detected USBPcap interfaces {interfaces}")
-    elif len(interfaces) == 1 and usb_identity and usb_identity.get("present"):
-        selected_interface = interfaces[0]
-        issues.append("exactly one USBPcap interface verified to contain KVM2USB; selected")
+        if host_interface in mapped_interfaces:
+            # Explicit selection is honored only when mapping evidence associates
+            # the interface with the KVM2USB device specifically.
+            selected_interface = host_interface
+        else:
+            issues.append(
+                f"explicit host_interface {host_interface!r} has no mapping evidence "
+                "associating it with the KVM2USB device; provide interface_mapping"
+            )
+    elif len(mapped_interfaces) == 1:
+        # Auto-select only when exactly one interface is positively mapped.
+        selected_interface = mapped_interfaces[0]
     else:
-        issues.append("USBPcap interface not explicitly selected; do not auto-select interfaces[0] without proving it contains KVM2USB")
-        if len(interfaces) > 1:
-            issues.append(f"multiple USBPcap interfaces detected: {interfaces}; an explicit selection is required")
+        if not identity_present:
+            issues.append("KVM2USB device identity not detected; cannot associate any interface")
+        issues.append(
+            "USBPcap interface not selected: require interface->KVM2USB mapping evidence "
+            "(PnP root-hub/extcap/mapping record); do not infer from global device presence"
+        )
+        if len(mapped_interfaces) > 1:
+            issues.append(f"multiple mapped USBPcap interfaces: {mapped_interfaces}; an explicit selection is required")
 
     if not target_state_confirmed:
         issues.append("target-state confirmation not provided (harmless state for the allowed input sequence)")
@@ -1056,7 +1346,9 @@ def preflight(
     if not beagle_driver_present:
         human_actions.append("install/attach the Total Phase Beagle driver/device")
     if not selected_interface:
-        human_actions.append("select the correct USBPcap root-hub/device interface (explicit)")
+        human_actions.append(
+            "provide interface->KVM2USB mapping evidence (PnP root-hub/extcap/mapping record) and select the interface"
+        )
     if not target_state_confirmed:
         human_actions.append("confirm the target is in a harmless state for the allowed input sequence")
     if not topology or not topology.get("cable_path") or not topology.get("beagle_position") or not topology.get("target_identity"):
@@ -1086,6 +1378,7 @@ def preflight(
             "target_state_confirmed": target_state_confirmed,
             "topology": topology,
             "driver_state": driver_state,
+            "interface_mapping": mapping,
         },
         "selected_host_interface": selected_interface,
         "issues": issues,
@@ -1097,7 +1390,12 @@ def preflight(
 
 
 def _detect_kvm2usb_identity() -> Dict[str, Any]:
-    """Detect the KVM2USB USB identity (VID/PID/serial) without live interaction."""
+    """Detect the KVM2USB USB identity (VID/PID/serial) without live interaction.
+
+    This is device-identity detection only; it does NOT prove which USBPcap
+    interface/root hub contains the device. Interface association requires a
+    mapping evidence record (interface_mapping).
+    """
     try:
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
@@ -1113,13 +1411,39 @@ def _detect_kvm2usb_identity() -> Dict[str, Any]:
 # --------------------------------------------------------------------------- no-live CLI
 
 
-def _cli_preflight(args: argparse.Namespace) -> int:
-    pf = preflight(
+def _preflight_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    """Build a preflight report from CLI arguments, including the completeness
+    gates (target-state, topology, driver-state, interface mapping)."""
+    topology = None
+    if args.cable_path or args.beagle_position or args.target_identity:
+        topology = {
+            "cable_path": args.cable_path or "",
+            "beagle_position": args.beagle_position or "",
+            "target_identity": args.target_identity or "",
+        }
+    driver_state = None
+    if args.official_app_driver or args.beagle_driver:
+        driver_state = {
+            "official_app": args.official_app_driver or "unknown",
+            "beagle": args.beagle_driver or "unknown",
+        }
+    interface_mapping = None
+    if args.interface_mapping:
+        interface_mapping = json.loads(args.interface_mapping)
+    return preflight(
         repo_root=Path(args.repo_root) if args.repo_root else None,
         output_root=args.output_root,
         host_interface=args.host_interface,
         target_beagle_port=args.target_beagle_port,
+        target_state_confirmed=args.target_state_confirmed,
+        topology=topology,
+        driver_state=driver_state,
+        interface_mapping=interface_mapping,
     )
+
+
+def _cli_preflight(args: argparse.Namespace) -> int:
+    pf = _preflight_from_args(args)
     print(json.dumps(pf, indent=2, sort_keys=True))
     if pf["issues"]:
         print("\nHUMAN ACTION REQUIRED:")
@@ -1130,8 +1454,14 @@ def _cli_preflight(args: argparse.Namespace) -> int:
 
 
 def _cli_build_manifest(args: argparse.Namespace) -> int:
-    pf = preflight(repo_root=Path(args.repo_root) if args.repo_root else None,
-                   output_root=args.output_root, host_interface=args.host_interface)
+    pf = _preflight_from_args(args)
+    # build-manifest fails closed when preflight is incomplete; a blocked
+    # preflight must not yield a manifest.
+    if pf["issues"]:
+        print(json.dumps({"blocked": True, "issues": pf["issues"], "human_actions": pf["human_actions"]},
+                         indent=2, sort_keys=True))
+        print("HUMAN ACTION REQUIRED: resolve the preflight blockers before building a manifest.")
+        return 2
     manifest = build_manifest(
         correlation=args.correlation or correlation_id(),
         operator=args.operator or "unknown",
@@ -1152,21 +1482,21 @@ def _cli_build_manifest(args: argparse.Namespace) -> int:
         driver_state=pf["detected"]["driver_state"],
         target_state_confirmed=bool(pf["detected"]["target_state_confirmed"]),
     )
+    nested = validate_manifest(manifest)
+    if nested:
+        print(json.dumps({"blocked": True, "validation_errors": nested}, indent=2, sort_keys=True))
+        return 2
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 
 
 def _cli_ingest_authorization(args: argparse.Namespace) -> int:
+    # All authorized values are parsed from the fetched comment body; the CLI
+    # only names the repository/issue/comment to fetch.
     envelope = ingest_authorization(
         repository=args.repository,
         issue=args.issue,
         comment_id=str(args.comment_id),
-        comment_url=args.comment_url or "",
-        experiment_id=args.experiment_id,
-        target=args.target,
-        allowed_input_sequence=args.allowed_input_sequence,
-        issued_utc=args.issued_utc,
-        expires_utc=args.expires_utc,
     )
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
@@ -1183,8 +1513,15 @@ def _cli_verify_authorization(args: argparse.Namespace) -> int:
         repository=args.repository,
         issue=args.issue,
         human_authority=args.human_authority,
+        refetch=not args.cached,
+        expected_comment_id=args.expected_comment_id,
+        expected_target=args.expected_target,
+        expected_allowed_input_sequence=args.expected_allowed_input_sequence,
+        expected_issued_utc=args.expected_issued_utc,
+        expected_expires_utc=args.expected_expires_utc,
+        expected_issue_url=args.expected_issue_url,
     )
-    print(json.dumps({"ok": ok, "reason": reason}, indent=2, sort_keys=True))
+    print(json.dumps({"ok": ok, "reason": reason, "cached": args.cached}, indent=2, sort_keys=True))
     return 0 if ok else 1
 
 
@@ -1204,21 +1541,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_pre = sub.add_parser("preflight", help="no-live preflight; emits HUMAN ACTION REQUIRED")
-    p_pre.add_argument("--repo-root")
-    p_pre.add_argument("--output-root", default=".work/evidence")
-    p_pre.add_argument("--host-interface")
-    p_pre.add_argument("--target-beagle-port", type=int, default=0)
+    for subparser in (sub.add_parser("preflight", help="no-live preflight; emits HUMAN ACTION REQUIRED"),
+                      sub.add_parser("build-manifest", help="emit the experiment manifest")):
+        subparser.add_argument("--repo-root")
+        subparser.add_argument("--output-root", default=".work/evidence")
+        subparser.add_argument("--host-interface")
+        subparser.add_argument("--target-beagle-port", type=int, default=0)
+        subparser.add_argument("--target-state-confirmed", action="store_true")
+        subparser.add_argument("--cable-path")
+        subparser.add_argument("--beagle-position")
+        subparser.add_argument("--target-identity")
+        subparser.add_argument("--official-app-driver")
+        subparser.add_argument("--beagle-driver")
+        subparser.add_argument("--interface-mapping", help='JSON mapping, e.g. \'{"\\\\\\\\\\\\.\\\\USBPcap1":{"device_instance":"USB\\\\VID_2B77&PID_3661\\\\..."}}\'')
+    p_pre = list(sub.choices.values())[0] if False else sub.choices.get("preflight")
+    p_build = sub.choices.get("build-manifest")
     p_pre.set_defaults(func=_cli_preflight)
-
-    p_build = sub.add_parser("build-manifest", help="emit the experiment manifest")
-    p_build.add_argument("--repo-root")
-    p_build.add_argument("--output-root", default=".work/evidence")
-    p_build.add_argument("--host-interface")
     p_build.add_argument("--correlation")
     p_build.add_argument("--operator")
     p_build.add_argument("--recovery-base-head")
-    p_build.add_argument("--target-beagle-port", type=int, default=0)
     p_build.add_argument("--target-state-note")
     p_build.set_defaults(func=_cli_build_manifest)
 
@@ -1226,21 +1567,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_ing.add_argument("--repository", required=True)
     p_ing.add_argument("--issue", type=int, required=True)
     p_ing.add_argument("--comment-id", required=True)
-    p_ing.add_argument("--comment-url")
-    p_ing.add_argument("--experiment-id", required=True)
-    p_ing.add_argument("--target", required=True)
-    p_ing.add_argument("--allowed-input-sequence", action="append", required=True)
-    p_ing.add_argument("--issued-utc", required=True)
-    p_ing.add_argument("--expires-utc", required=True)
     p_ing.add_argument("--output")
     p_ing.set_defaults(func=_cli_ingest_authorization)
 
-    p_ver = sub.add_parser("verify-authorization", help="verify a cached evidence envelope without live capture")
+    p_ver = sub.add_parser("verify-authorization", help="verify a cached evidence envelope against the current GitHub comment (or cached evidence)")
     p_ver.add_argument("--envelope", required=True)
     p_ver.add_argument("--experiment-id", required=True)
     p_ver.add_argument("--repository", required=True)
     p_ver.add_argument("--issue", type=int, required=True)
     p_ver.add_argument("--human-authority", default="")
+    p_ver.add_argument("--expected-comment-id",
+                       help="expected comment id; compared against the envelope (never creates authorization)")
+    p_ver.add_argument("--expected-target",
+                       help="expected target identity; compared against the comment-derived target (never creates authorization)")
+    p_ver.add_argument("--expected-allowed-input-sequence", action="append",
+                       help="expected allowed input sequence item; repeatable (compared, never creates authorization)")
+    p_ver.add_argument("--expected-issued-utc",
+                       help="expected issued UTC; compared against the comment-derived value (never creates authorization)")
+    p_ver.add_argument("--expected-expires-utc",
+                       help="expected expiry UTC; compared against the comment-derived value (never creates authorization)")
+    p_ver.add_argument("--expected-issue-url",
+                       help="expected issue URL; compared against the envelope (never creates authorization)")
+    p_ver.add_argument("--cached", action="store_true",
+                       help="verify cached evidence only (no GitHub re-fetch); explicitly identified as cached evidence")
     p_ver.set_defaults(func=_cli_verify_authorization)
 
     args = parser.parse_args(argv)
