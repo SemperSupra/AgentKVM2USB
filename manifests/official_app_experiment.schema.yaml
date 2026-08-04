@@ -1,0 +1,99 @@
+# Schema for the synchronized official-Epiphan-app differential experiment.
+# This is the machine-readable manifest produced by scripts/official_app_baseline.py.
+# Raw captures, proprietary binaries, and restricted evidence never enter this
+# repository; the manifest records only sanitized identity, hashes, commands,
+# markers, and procedures.
+
+required:
+  - schema
+  - experiment
+  - environment
+  - capture
+  - human_authorization_gate
+  - prohibited
+
+fields:
+  schema:
+    type: string
+    pattern: "^manifests/official_app_experiment.schema.yaml$"
+  experiment:
+    required:
+      - id
+      - objective
+      - operator
+      - date
+      - git_commit
+      - recovery_base_head
+    fields:
+      id:
+        type: string
+        description: Capture-session correlation ID, e.g. official-app-20260804T141700Z.
+      objective:
+        type: string
+      operator:
+        type: string
+      date:
+        type: string
+        format: yyyymmdd
+      git_commit:
+        type: string
+      recovery_base_head:
+        type: string
+  environment:
+    required:
+      - host_interface
+      - target_beagle_port
+      - usbpcap_present
+      - tshark_present
+      - beagle_windows_api_present
+      - official_app_present
+      - target_state_note
+    fields:
+      host_interface:
+        type: string
+        nullable: true
+        description: Host USBPcap interface or Wireshark capture interface.
+      target_beagle_port:
+        type: integer
+      usbpcap_present:
+        type: boolean
+      tshark_present:
+        type: boolean
+      beagle_windows_api_present:
+        type: boolean
+      official_app_present:
+        type: boolean
+      target_state_note:
+        type: string
+  capture:
+    required:
+      - correlation_id
+      - output_root
+      - ignored
+      - event_markers
+    fields:
+      correlation_id:
+        type: string
+      output_root:
+        type: string
+        description: Must resolve under an ignored/private capture path.
+      ignored:
+        type: boolean
+        const: true
+      event_markers:
+        type: array
+        items:
+          type: object
+          required:
+            - event
+            - description
+  human_authorization_gate:
+    type: string
+    nullable: true
+    description: >-
+      Non-empty string naming the GitHub issue/comment or human action that
+      authorizes the live capture. A live capture is refused without it.
+  prohibited:
+    type: array
+    items:
+      type: string
