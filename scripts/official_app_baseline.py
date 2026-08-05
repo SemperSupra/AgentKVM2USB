@@ -73,23 +73,27 @@ def load_schema(repo_root: Optional[Path] = None) -> Dict[str, Any]:
     """Load the manifest schema YAML into a dict (structural parse; no PyYAML
     dependency). The schema is the single source of truth for required fields.
 
-    Handles the two-space YAML layout used by this schema: top-level ``required``
-    list items are at indent 2 (``  - field``) and top-level ``fields`` map keys
-    are at indent 2 (``  key:``). Nested ``required`` lists inside a section are
-    at indent 4/6 and are read into that section's ``required`` list.
+    Handles the two-space YAML layout used by this schema:
+    - top-level ``required`` list items at indent 2;
+    - top-level ``fields`` map section keys at indent 2;
+    - a section's ``required`` list at indent 4 with items at indent 6;
+    - a section's nested ``fields`` sub-map keys at indent 6, and a sub-field's
+      ``required`` list at indent 8 with items at indent 10.
+
+    Section required lists are exposed as ``fields[<section>]["required"]`` and
+    nested sub-field required lists as ``fields[<section>]["fields"][<sub>]["required"]``.
     """
     root = (repo_root or Path(__file__).resolve().parents[1])
     text = (root / SCHEMA_PATH).read_text(encoding="utf-8")
     data: Dict[str, Any] = {"required": [], "fields": {}}
-    # Track the two structural lists/maps by their indentation depth.
-    # Top-level: `required:` at indent 0 with `  - item` items at indent 2;
-    # `fields:` at indent 0 with `  key:` map entries at indent 2, and nested
-    # `required:` lists at indent 4 whose items are at indent 6.
-    top_required_depth: Optional[int] = None        # depth of the top `required:` key
-    field_key_depth: Optional[int] = None           # depth of a `key:` under a section
-    required_items_depth: Optional[int] = None      # depth of `- item` in a required list
+    top_required = False
     current_section: Optional[str] = None
-    section_required_depth: Optional[int] = None
+    section_node: Optional[Dict[str, Any]] = None
+    section_required = False
+    section_in_fields = False
+    current_sub: Optional[str] = None
+    sub_node: Optional[Dict[str, Any]] = None
+    sub_required = False
     for raw in text.splitlines():
         line = raw.rstrip()
         if not line.strip() or line.lstrip().startswith("#"):
@@ -98,37 +102,78 @@ def load_schema(repo_root: Optional[Path] = None) -> Dict[str, Any]:
         stripped = line.strip()
 
         if indent == 0:
-            top_required_depth = None
-            field_key_depth = None
-            required_items_depth = None
+            top_required = (stripped == "required:")
             current_section = None
-            section_required_depth = None
-            if stripped == "required:":
-                top_required_depth = 0
-            elif stripped == "fields:":
-                field_key_depth = 2
+            section_node = None
+            section_required = False
+            section_in_fields = False
+            current_sub = None
+            sub_node = None
+            sub_required = False
             continue
 
-        if top_required_depth is not None:
-            if stripped.startswith("- ") and indent == top_required_depth + 2:
+        if top_required:
+            if indent == 2 and stripped.startswith("- "):
                 data["required"].append(stripped[2:].strip())
-            elif not stripped.startswith("- ") and not stripped.endswith(":"):
-                pass  # ignore other content in the top required list
             continue
 
-        if field_key_depth is not None:
-            if indent == field_key_depth and stripped.endswith(":"):
-                key = stripped.rstrip(":").strip()
-                data["fields"].setdefault(key, {})
-                current_section = key
-                section_required_depth = None
-                required_items_depth = None
-            elif indent == field_key_depth + 2 and stripped == "required:":
-                section_required_depth = field_key_depth + 2
-            elif section_required_depth is not None and indent == section_required_depth + 2 and stripped.startswith("- "):
-                value = stripped[2:].strip()
-                if current_section:
-                    data["fields"].setdefault(current_section, {}).setdefault("required", []).append(value)
+        if indent == 2 and stripped.endswith(":"):
+            # A new top-level section key under `fields:`.
+            key = stripped.rstrip(":").strip()
+            section_node = data["fields"].setdefault(key, {})
+            current_section = key
+            section_required = False
+            section_in_fields = False
+            current_sub = None
+            sub_node = None
+            sub_required = False
+            continue
+
+        if section_node is None:
+            continue
+
+        if indent == 4:
+            if stripped == "required:":
+                section_required = True
+                current_sub = None
+                sub_node = None
+                sub_required = False
+                continue
+            if stripped == "fields:":
+                section_required = False
+                section_in_fields = True
+                current_sub = None
+                sub_node = None
+                sub_required = False
+                continue
+            # Other field metadata (type, description, nullable) at indent 4.
+            continue
+
+        if section_required and indent == 6 and stripped.startswith("- "):
+            section_node.setdefault("required", []).append(stripped[2:].strip())
+            continue
+
+        if section_in_fields and indent == 6 and stripped.endswith(":"):
+            key = stripped.rstrip(":").strip()
+            sub_node = section_node.setdefault("fields", {}).setdefault(key, {})
+            current_sub = key
+            sub_required = False
+            continue
+
+        if sub_node is None:
+            continue
+
+        if indent == 8:
+            if stripped == "required:":
+                sub_required = True
+                continue
+            if stripped == "fields:":
+                sub_required = False
+                continue
+            continue
+
+        if sub_required and indent == 10 and stripped.startswith("- "):
+            sub_node.setdefault("required", []).append(stripped[2:].strip())
             continue
     return data
 
@@ -150,6 +195,15 @@ def schema_auth_required_fields(repo_root: Optional[Path] = None) -> List[str]:
     """Authorization-record required fields derived from the schema, not a
     hand-maintained duplicate list."""
     return schema_section_required("authorization_record", repo_root)
+
+
+def schema_auth_block_required_fields(repo_root: Optional[Path] = None) -> List[str]:
+    """Required fields of the nested ``authorization_block`` inside the
+    authorization-record envelope, derived from the schema."""
+    schema = load_schema(repo_root)
+    auth = (schema.get("fields") or {}).get("authorization_record") or {}
+    block = (auth.get("fields") or {}).get("authorization_block") or {}
+    return block.get("required", [])
 
 
 # --------------------------------------------------------------------------- correlation / timestamps
@@ -343,7 +397,11 @@ def classify_pid(pid_name: Optional[str]) -> str:
         return "TOKEN_SETUP"
     if upper in ("DATA0", "DATA1", "DATA2", "MDATA"):
         return "DATA"
-    if upper in ("ACK", "NAK", "STALL", "NYET"):
+    if upper == "NAK":
+        # NAK identity is preserved through normalization/counting; it must not
+        # be conflated with ACK/STALL/NYET handshakes.
+        return "NAK"
+    if upper in ("ACK", "STALL", "NYET"):
         return "HANDSHAKE"
     if upper in ("SOF", "PRE", "SPLIT", "PING"):
         return "SPECIAL"
@@ -351,32 +409,28 @@ def classify_pid(pid_name: Optional[str]) -> str:
 
 
 def in_nak_data_counts(records: List[Dict[str, Any]]) -> Dict[str, int]:
-    counts = {"IN": 0, "OUT": 0, "SETUP": 0, "NAK": 0, "DATA": 0}
+    """Count IN/OUT/SETUP/NAK/DATA/HANDSHAKE target transactions.
+
+    Normalized records carry a ``class_`` (which preserves NAK separately from
+    the ACK/STALL/NYET HANDSHAKE class after ``classify_pid``); raw records are
+    classified on the fly. ACK/STALL/NYET increment ``HANDSHAKE``, never NAK.
+    """
+    counts = {"IN": 0, "OUT": 0, "SETUP": 0, "NAK": 0, "DATA": 0, "HANDSHAKE": 0}
     for record in records:
-        class_ = record.get("class_")
-        if class_:
-            if class_ == "TOKEN_IN":
-                counts["IN"] += 1
-            elif class_ == "TOKEN_OUT":
-                counts["OUT"] += 1
-            elif class_ == "TOKEN_SETUP":
-                counts["SETUP"] += 1
-            elif class_ == "NAK":
-                counts["NAK"] += 1
-            elif class_ == "DATA":
-                counts["DATA"] += 1
-        else:
-            raw = record.get("pid_name")
-            if raw == "IN":
-                counts["IN"] += 1
-            elif raw == "OUT":
-                counts["OUT"] += 1
-            elif raw == "SETUP":
-                counts["SETUP"] += 1
-            elif raw == "NAK":
-                counts["NAK"] += 1
-            elif classify_pid(raw) == "DATA":
-                counts["DATA"] += 1
+        pid = record.get("pid_name")
+        class_ = record.get("class_") or classify_pid(pid)
+        if class_ == "TOKEN_IN":
+            counts["IN"] += 1
+        elif class_ == "TOKEN_OUT":
+            counts["OUT"] += 1
+        elif class_ == "TOKEN_SETUP":
+            counts["SETUP"] += 1
+        elif class_ == "NAK":
+            counts["NAK"] += 1
+        elif class_ == "HANDSHAKE":
+            counts["HANDSHAKE"] += 1
+        elif class_ == "DATA":
+            counts["DATA"] += 1
     return counts
 
 
@@ -490,9 +544,14 @@ def _ts_seconds(value: Any) -> Optional[float]:
     return parsed.timestamp()
 
 
+def _sort_key_ts(row: Dict[str, Any]) -> float:
+    ts = _ts_seconds(row.get("timestamp_utc"))
+    return ts if ts is not None else float("inf")
+
+
 def _find_first(rows: List[Dict[str, Any]], predicate) -> Optional[float]:
     """Return the earliest timestamp (epoch seconds) in ``rows`` matching a
-    predicate, or None when unavailable."""
+    predicate, or None when unavailable. ``rows`` must be time-ordered."""
     for r in rows:
         if predicate(r):
             ts = _ts_seconds(r.get("timestamp_utc"))
@@ -501,11 +560,37 @@ def _find_first(rows: List[Dict[str, Any]], predicate) -> Optional[float]:
     return None
 
 
-def _is_target_data_or_nak(row: Dict[str, Any]) -> bool:
+def _find_first_strictly_after(
+    rows: List[Dict[str, Any]], predicate, after_ts: Optional[float]
+) -> Optional[float]:
+    """Return the earliest timestamp in ``rows`` matching ``predicate`` whose
+    timestamp is strictly after ``after_ts``, or None. ``rows`` must be
+    time-ordered."""
+    if after_ts is None:
+        return None
+    for r in rows:
+        ts = _ts_seconds(r.get("timestamp_utc"))
+        if ts is not None and ts > after_ts and predicate(r):
+            return ts
+    return None
+
+
+def _is_target_data(row: Dict[str, Any]) -> bool:
+    """A target DATA transaction (never a NAK or other handshake)."""
     return row.get("kind") == "target_transaction" and (
-        row.get("class_") in ("DATA", "HANDSHAKE")
-        or row.get("pid_name") in ("DATA0", "DATA1", "DATA2", "MDATA", "NAK")
+        row.get("class_") == "DATA" or row.get("pid_name") in ("DATA0", "DATA1", "DATA2", "MDATA")
     )
+
+
+def _is_target_nak(row: Dict[str, Any]) -> bool:
+    """A target NAK transaction (never ACK/STALL/NYET or DATA)."""
+    return row.get("kind") == "target_transaction" and (
+        row.get("class_") == "NAK" or row.get("pid_name") == "NAK"
+    )
+
+
+def _is_target_data_or_nak(row: Dict[str, Any]) -> bool:
+    return _is_target_data(row) or _is_target_nak(row)
 
 
 def stage_timing_metrics(
@@ -518,73 +603,80 @@ def stage_timing_metrics(
 
     Metrics are stored under unique keys so earlier stages are never overwritten.
     A metric value is present only when both endpoints are measured; unavailable
-    evidence is ``None`` and is never confused with a measured zero duration.
+    evidence is absent and is never confused with a measured zero duration.
 
-    Measured pairs (seconds):
-    - ``app_start.marker_to_first_host_report``
+    Measured pairs (seconds), each with strictly-after selection so an event is
+    never paired with an earlier one:
+    - ``app_start.marker_to_first_host_report`` (first host report after app start)
     - ``<stage>.marker_to_first_host_transfer``
-    - ``<stage>.host_to_first_target_data_or_nak``
+    - ``<stage>.host_to_first_target_data_or_nak`` (first DATA/NAK after the host
+      transfer)
     - ``capslock.down_to_up``
     - ``ordinary_key.down_to_up``
     - ``all_keys_release.last_key_release_to_all_keys_release``
-    - ``init_to_first_target_data`` (across the full timeline, when present)
+    - ``init_to_first_target_data`` (first real DATA after app start, never a NAK)
+
+    The returned dict also carries ``_endpoints`` (metric path -> (start_ts,
+    end_ts)) used to order timing divergences chronologically from actual event
+    timestamps.
     """
     metrics: Dict[str, Any] = {}
-    buckets = align_by_marker(rows, marker_events)
+    endpoints: Dict[str, Tuple[float, float]] = {}
+    ordered = sorted(rows, key=_sort_key_ts)
+    buckets = align_by_marker(ordered, marker_events)
+
+    def record(section: str, metric: str, start_ts: Optional[float], end_ts: Optional[float]) -> None:
+        if start_ts is not None and end_ts is not None:
+            value = round(end_ts - start_ts, 6)
+            if section:
+                metrics.setdefault(section, {})[metric] = value
+            else:
+                metrics[metric] = value
+            endpoints[f"{section}.{metric}" if section else metric] = (start_ts, end_ts)
 
     def marker_ts(name: str) -> Optional[float]:
-        for r in rows:
+        for r in ordered:
             if r.get("kind") == "marker" and (r.get("event") or r.get("marker")) == name:
                 ts = _ts_seconds(r.get("timestamp_utc"))
                 if ts is not None:
                     return ts
         return None
 
-    # app_start marker -> first host report
-    app_start_ts = marker_ts("app_start")
-    first_host = _find_first(rows, lambda r: r.get("kind") == "host_transfer")
-    if app_start_ts is not None and first_host is not None:
-        metrics.setdefault("app_start", {})["marker_to_first_host_report"] = round(first_host - app_start_ts, 6)
+    def first_host_after(ts: Optional[float]) -> Optional[float]:
+        return _find_first_strictly_after(ordered, lambda r: r.get("kind") == "host_transfer", ts)
 
-    # init (first app_start marker) -> first target DATA across the full timeline
-    init_ts = app_start_ts
-    first_data = _find_first(rows, _is_target_data_or_nak)
-    if init_ts is not None and first_data is not None:
-        metrics["init_to_first_target_data"] = round(first_data - init_ts, 6)
+    # app_start marker -> first host report (strictly after app start)
+    app_start_ts = marker_ts("app_start")
+    record("app_start", "marker_to_first_host_report", app_start_ts, first_host_after(app_start_ts))
+
+    # init (first app_start marker) -> first real target DATA across the full
+    # timeline. Requires DATA specifically; a NAK is never target DATA.
+    first_data = _find_first_strictly_after(ordered, _is_target_data, app_start_ts)
+    record("", "init_to_first_target_data", app_start_ts, first_data)
 
     # Per-stage: marker -> first host transfer; host transfer -> first DATA/NAK
+    # that is strictly after that host transfer (a target event that precedes the
+    # host transfer is never selected).
     for stage in marker_events:
         bucket = buckets.get(stage, [])
         stage_ts = marker_ts(stage)
-        first_host_in_stage = _find_first(bucket, lambda r: r.get("kind") == "host_transfer")
-        if stage_ts is not None and first_host_in_stage is not None:
-            metrics.setdefault(stage, {})["marker_to_first_host_transfer"] = round(
-                first_host_in_stage - stage_ts, 6)
-        host_ts = _find_first(bucket, lambda r: r.get("kind") == "host_transfer")
-        target_ts = _find_first(bucket, _is_target_data_or_nak)
-        if host_ts is not None and target_ts is not None:
-            metrics.setdefault(stage, {})["host_to_first_target_data_or_nak"] = round(
-                target_ts - host_ts, 6)
+        host_ts = _find_first_strictly_after(bucket, lambda r: r.get("kind") == "host_transfer", stage_ts)
+        record(stage, "marker_to_first_host_transfer", stage_ts, host_ts)
+        target_ts = _find_first_strictly_after(bucket, _is_target_data_or_nak, host_ts)
+        record(stage, "host_to_first_target_data_or_nak", host_ts, target_ts)
 
     # Cross-marker intervals (search the full timeline, not a single bucket)
-    capslock_down = marker_ts("capslock_down")
-    capslock_up = marker_ts("capslock_up")
-    if capslock_down is not None and capslock_up is not None:
-        metrics.setdefault("capslock", {})["down_to_up"] = round(capslock_up - capslock_down, 6)
-    ordinary_down = marker_ts("ordinary_key_down")
-    ordinary_up = marker_ts("ordinary_key_up")
-    if ordinary_down is not None and ordinary_up is not None:
-        metrics.setdefault("ordinary_key", {})["down_to_up"] = round(ordinary_up - ordinary_down, 6)
+    record("capslock", "down_to_up", marker_ts("capslock_down"), marker_ts("capslock_up"))
+    record("ordinary_key", "down_to_up", marker_ts("ordinary_key_down"), marker_ts("ordinary_key_up"))
     all_release = marker_ts("all_keys_release")
     last_key_release = None
     for name in ("ordinary_key_up", "capslock_up"):
         ts = marker_ts(name)
         if ts is not None and (last_key_release is None or ts > last_key_release):
             last_key_release = ts
-    if last_key_release is not None and all_release is not None:
-        metrics.setdefault("all_keys_release", {})["last_key_release_to_all_keys_release"] = round(
-            all_release - last_key_release, 6)
+    record("all_keys_release", "last_key_release_to_all_keys_release", last_key_release, all_release)
 
+    metrics["_endpoints"] = endpoints
     metrics["tolerance_seconds"] = tolerance
     return metrics
 
@@ -599,16 +691,19 @@ def compare_timing(
 
     Metrics are compared independently with the configured tolerance. Only
     metrics present in both sessions are compared; unavailable evidence is
-    reported but not treated as a divergence. Returns the chronologically first
-    timing divergence (by stage order / metric definition order).
+    reported but not treated as a divergence. The chronologically first timing
+    divergence is ordered by the actual metric endpoint timestamps (the measured
+    interval's start, then its end), falling back to metric definition order only
+    as a tiebreak — never a fixed list order alone.
     """
     official_metrics = stage_timing_metrics(official_rows, marker_events=marker_events, tolerance=tolerance)
     agent_metrics = stage_timing_metrics(agent_rows, marker_events=marker_events, tolerance=tolerance)
+    official_endpoints = official_metrics.get("_endpoints") or {}
+    agent_endpoints = agent_metrics.get("_endpoints") or {}
 
     divergences: List[Dict[str, Any]] = []
     metric_paths: List[Tuple[str, str]] = []
-    # Chronological order: app-start window first, then per-stage windows in
-    # marker order, then the cross-marker release intervals.
+    # Definition order used only to disambiguate identical endpoint timestamps.
     metric_paths.append(("app_start", "marker_to_first_host_report"))
     metric_paths.append(("app_start", "host_to_first_target_data_or_nak"))
     for stage in marker_events:
@@ -621,7 +716,8 @@ def compare_timing(
     metric_paths.append(("ordinary_key", "down_to_up"))
     metric_paths.append(("all_keys_release", "last_key_release_to_all_keys_release"))
 
-    for section, metric in metric_paths:
+    for index, (section, metric) in enumerate(metric_paths):
+        path = f"{section}.{metric}" if section else metric
         if section:
             o = (official_metrics.get(section) or {}).get(metric)
             a = (agent_metrics.get(section) or {}).get(metric)
@@ -631,16 +727,28 @@ def compare_timing(
         if o is None or a is None:
             continue
         if abs(o - a) > tolerance:
+            # Use the actual interval start/end timestamps for chronological
+            # ordering; fall back to definition order only on a tie.
+            start_ts = official_endpoints.get(path, (float("inf"),))[0]
+            end_ts = official_endpoints.get(path, (float("inf"), float("inf")))[1]
             divergences.append({
-                "metric": f"{section}.{metric}" if section else metric,
+                "metric": path,
                 "official_s": o, "agent_s": a, "delta_s": round(o - a, 6),
+                "start_ts": start_ts, "end_ts": end_ts, "definition_order": index,
             })
+
+    divergences.sort(key=lambda d: (d["start_ts"], d["end_ts"], d["definition_order"]))
+    # Drop the internal ordering keys from the public divergence records.
+    public_divergences = [
+        {k: v for k, v in d.items() if k not in ("start_ts", "end_ts", "definition_order")}
+        for d in divergences
+    ]
 
     return {
         "official": official_metrics,
         "agent": agent_metrics,
-        "first_timing_divergence": divergences[0] if divergences else None,
-        "timing_divergences": divergences,
+        "first_timing_divergence": public_divergences[0] if public_divergences else None,
+        "timing_divergences": public_divergences,
         "tolerance_seconds": tolerance,
     }
 
@@ -690,7 +798,8 @@ def compare_sessions(
     official = align_by_marker(official_rows, marker_events)
     agent = align_by_marker(agent_rows, marker_events)
     comparison: Dict[str, Any] = {"stages": {}, "summary": {}}
-    totals = {f"{side}_{key}": 0 for side in ("official", "agent") for key in ("IN", "OUT", "SETUP", "NAK", "DATA")}
+    count_keys = ("IN", "OUT", "SETUP", "NAK", "DATA", "HANDSHAKE")
+    totals = {f"{side}_{key}": 0 for side in ("official", "agent") for key in count_keys}
     first_divergence: Optional[Dict[str, Any]] = None
     for marker in marker_events:
         o_host = [r for r in official.get(marker, []) if r.get("kind") == "host_transfer"]
@@ -699,12 +808,12 @@ def compare_sessions(
         a_tgt = [r for r in agent.get(marker, []) if r.get("kind") == "target_transaction"]
         o_counts = in_nak_data_counts(o_tgt)
         a_counts = in_nak_data_counts(a_tgt)
-        for key in ("IN", "OUT", "SETUP", "NAK", "DATA"):
+        for key in count_keys:
             totals[f"official_{key}"] += o_counts[key]
             totals[f"agent_{key}"] += a_counts[key]
         host_div = _first_host_divergence(o_host, a_host)
         target_div = None
-        for key in ("IN", "OUT", "SETUP", "NAK", "DATA"):
+        for key in count_keys:
             if o_counts[key] != a_counts[key]:
                 target_div = {"side": "target", "field": key,
                               "official": o_counts[key], "agent": a_counts[key]}
@@ -829,12 +938,16 @@ def parse_authorization_block(body: str) -> Dict[str, Any]:
     fetched comment body.
 
     The block must contain repository, issue, experiment_id, target,
-    allowed_input_sequence, issued_utc, expires_utc, and authority. Raises
-    ValueError when the block is absent or malformed.
+    allowed_input_sequence, issued_utc, expires_utc, and authority. Exactly one
+    fenced JSON block is accepted; multiple blocks are rejected rather than
+    silently taking the first. Raises ValueError when the block is absent,
+    malformed, ambiguous, or when issued_utc does not precede expires_utc.
     """
     fences = re.findall(r"```json\s*(\{.*?\})\s*```", body, flags=re.DOTALL)
     if not fences:
         raise ValueError("no fenced JSON authorization block found in the comment body")
+    if len(fences) > 1:
+        raise ValueError("multiple fenced JSON authorization blocks found; exactly one is required")
     try:
         block = json.loads(fences[0])
     except json.JSONDecodeError as exc:
@@ -847,7 +960,21 @@ def parse_authorization_block(body: str) -> Dict[str, Any]:
             raise ValueError(f"authorization block missing required field: {field}")
     if not isinstance(block.get("allowed_input_sequence"), list) or not block["allowed_input_sequence"]:
         raise ValueError("authorization block allowed_input_sequence must be a non-empty list")
+    try:
+        issued = dt.datetime.fromisoformat(str(block["issued_utc"]).replace("Z", "+00:00"))
+        expires = dt.datetime.fromisoformat(str(block["expires_utc"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError) as exc:
+        raise ValueError("authorization block issued_utc/expires_utc must be ISO-8601") from exc
+    if issued >= expires:
+        raise ValueError("authorization block issued_utc must precede expires_utc")
     return block
+
+
+def _authority_references(authority: Any, author: str) -> bool:
+    """Return True when the authority string names the given GitHub author (the
+    approved human authority), so an authority can never be an unchecked
+    arbitrary string."""
+    return bool(authority) and author in str(authority)
 
 
 def build_evidence_envelope(
@@ -969,14 +1096,20 @@ def verify_authorization(
     cached envelope. ``refetch=False`` uses the cached envelope only and must be
     explicitly identified as cached evidence. Confirms repository, issue URL,
     comment ID/URL, GitHub author, experiment ID, target, exact allowed input
-    sequence, issued/expiry UTC, and the envelope hash — all derived from the
-    parsed comment body. The ``expected_*`` arguments are caller-supplied expected
-    values used only for comparison; they never create or override authorization
-    values. An expected value that does not match the comment-derived value fails
-    verification.
+    sequence, issued/expiry UTC, the authority contract, and the envelope hash —
+    all derived from the parsed comment body.
+
+    ``human_authority`` is mandatory: it is the approved human authority (the
+    GitHub login that must have posted the comment). The GitHub author must equal
+    it, and ``authorization_block.authority`` must reference it, so an authority
+    can never be an unchecked arbitrary string. The ``expected_*`` arguments are
+    caller-supplied expected values used only for comparison; they never create
+    or override authorization values.
     """
     if not isinstance(envelope, dict):
         return False, "no cached evidence envelope"
+    if not human_authority:
+        return False, "human_authority (approved authority) is required and cannot be empty"
     if str(envelope.get("repository")) != repository:
         return False, "repository mismatch"
     if int(envelope.get("issue") or 0) != int(issue):
@@ -1015,8 +1148,21 @@ def verify_authorization(
         return False, f"authorization issued_utc {block.get('issued_utc')!r} != expected {expected_issued_utc!r}"
     if expected_expires_utc is not None and str(block.get("expires_utc")) != expected_expires_utc:
         return False, f"authorization expires_utc {block.get('expires_utc')!r} != expected {expected_expires_utc!r}"
-    if human_authority and str(envelope.get("github_author")) != human_authority:
+    # GitHub author validation is mandatory: the comment must have been posted by
+    # the approved human authority.
+    if str(envelope.get("github_author")) != human_authority:
         return False, f"github author {envelope.get('github_author')!r} != recorded human authority {human_authority!r}"
+    # The authority named in the block must reference the approved authority and
+    # agree with the envelope's recorded authority; it is never an unchecked
+    # arbitrary string.
+    block_authority = str(block.get("authority") or "")
+    if not _authority_references(block_authority, human_authority):
+        return False, (
+            f"authorization block authority {block_authority!r} does not reference "
+            f"the approved authority {human_authority!r}"
+        )
+    if str(envelope.get("authority") or "") != block_authority:
+        return False, "envelope authority differs from the authorization block authority"
 
     if refetch:
         current = fetched or fetch_issue_comment(repository, str(envelope.get("comment_id")))
@@ -1042,6 +1188,8 @@ def verify_authorization(
         expires = dt.datetime.fromisoformat(str(block["expires_utc"]).replace("Z", "+00:00"))
     except (KeyError, ValueError):
         return False, "authorization timestamps must be ISO-8601"
+    if issued >= expires:
+        return False, "authorization issued_utc must precede expires_utc"
     if now < issued:
         return False, "authorization not yet valid"
     if now >= expires:
@@ -1184,6 +1332,13 @@ def validate_manifest(manifest: Dict[str, Any], repo_root: Optional[Path] = None
             for field in schema_auth_required_fields(repo_root):
                 if not auth.get(field):
                     errors.append(f"authorization_record.{field} is required")
+            block = auth.get("authorization_block")
+            if not isinstance(block, dict):
+                errors.append("authorization_record.authorization_block must be an object")
+            else:
+                for field in schema_auth_block_required_fields(repo_root):
+                    if not block.get(field):
+                        errors.append(f"authorization_record.authorization_block.{field} is required")
     return errors
 
 
@@ -1246,6 +1401,29 @@ def _mapping_entry_maps_kvm2usb(
     return f"VID_{vid}" in instance and f"PID_{pid}" in instance
 
 
+# Accepted driver-state evidence values. Anything else — including ``unknown`` or
+# a missing value — is rejected so driver evidence cannot be silently skipped.
+_ACCEPTED_DRIVER_STATES = ("detected", "present", "installed", "ok", "ready", "available")
+
+
+def _driver_evidence_ok(driver_state: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    """Return (ok, reason) for complete, accepted official-app and Beagle driver
+    evidence. Missing or ``unknown`` (or any unrecognized) values are rejected."""
+    if not isinstance(driver_state, dict):
+        return False, "driver-state evidence required: official_app and beagle driver status"
+    for key in ("official_app", "beagle"):
+        value = driver_state.get(key)
+        normalized = str(value).strip().lower() if value is not None else ""
+        if not normalized or normalized == "unknown":
+            return False, f"driver-state evidence incomplete: driver_state.{key} is missing or 'unknown'"
+        if normalized not in _ACCEPTED_DRIVER_STATES:
+            return False, (
+                f"driver-state evidence not accepted: driver_state.{key} = {value!r}; "
+                f"expected one of {', '.join(_ACCEPTED_DRIVER_STATES)}"
+            )
+    return True, ""
+
+
 def preflight(
     *,
     repo_root: Optional[Path] = None,
@@ -1256,18 +1434,26 @@ def preflight(
     topology: Optional[Dict[str, Any]] = None,
     driver_state: Optional[Dict[str, Any]] = None,
     interface_mapping: Optional[Dict[str, Any]] = None,
+    offline_only: bool = False,
 ) -> Dict[str, Any]:
-    """No-live workstation preflight/orchestration.
+    """No-live workstation preflight/orchestration that fails closed.
 
     Detects tools, drivers, USB identities, interfaces, disk space, topology,
-    Beagle position, and target-state confirmation.
+    Beagle position, target-state confirmation, driver-state evidence, and output
+    root containment.
 
-    Interface selection is evidence-backed: an explicit ``host_interface`` is
-    accepted only when ``interface_mapping`` associates it with the KVM2USB
-    device (a PnP/extcap/mapping record), and auto-selection happens only when
-    exactly one interface is positively mapped. A global device-presence check
-    alone never proves association. Returns HUMAN ACTION REQUIRED until all
-    required fields are complete.
+    Interface selection is evidence-backed and workstation-grounded: an interface
+    qualifies only when its mapping evidence associates it with the KVM2USB
+    device (a PnP/extcap/mapping record) AND it is present in the detected
+    USBPcap interface list. A mapped-but-absent interface is rejected. A global
+    device-presence check alone never proves association.
+
+    A runnable preflight additionally requires current KVM2USB device presence
+    (unless ``offline_only`` is selected), complete accepted official-app and
+    Beagle driver-state evidence (missing/``unknown`` rejected), and an output
+    root that is contained under the approved ignored/private root and
+    git-ignored. Capture commands are emitted only when every related gate
+    passes. Returns HUMAN ACTION REQUIRED until all gates pass.
     """
     root = (repo_root or Path(__file__).resolve().parents[1]).resolve()
     usbpcap_cmd = find_usbpcap_cmd()
@@ -1278,6 +1464,7 @@ def preflight(
     beagle_api_dir = find_beagle_windows_api_dir(root)
     beagle_driver_present = _detect_beagle_driver()
     usb_identity = _detect_kvm2usb_identity()
+    identity_present = bool(usb_identity and usb_identity.get("present"))
 
     # interface_mapping maps a USBPcap interface to the KVM2USB device instance.
     # Example: {"\\\\.\\USBPcap1": {"device_instance": "USB\\VID_2B77&PID_3661\\...", "evidence": "pnp-root-hub"}}
@@ -1285,11 +1472,14 @@ def preflight(
     # the KVM2USB device (matching VID/PID/instance or an explicit reviewed
     # mapping marker); a record for some other device never counts.
     mapping = interface_mapping or {}
-    mapped_interfaces = [
+    positively_mapped = [
         name for name, entry in mapping.items()
         if _mapping_entry_maps_kvm2usb(entry, usb_identity)
     ]
-    identity_present = bool(usb_identity and usb_identity.get("present"))
+    # Mappings must reference interfaces actually detected on the workstation;
+    # a mapped-but-absent interface is rejected, never silently ignored.
+    absent_mapped = [name for name in positively_mapped if name not in interfaces]
+    available_mapped = [name for name in positively_mapped if name in interfaces]
 
     issues: List[str] = []
     if not usbpcap_cmd:
@@ -1304,37 +1494,72 @@ def preflight(
         issues.append("Total Phase Beagle driver/device not detected")
     if disk.free < 2 * 1024 * 1024 * 1024:
         issues.append(f"insufficient disk space: {disk.free} bytes free")
+    if absent_mapped:
+        issues.append(
+            "interface->KVM2USB mapping references USBPcap interfaces not detected "
+            f"on this workstation: {absent_mapped}"
+        )
 
-    # Interface selection requires mapping evidence associating the interface
-    # with the KVM2USB device; device presence alone is never sufficient.
+    # Interface selection: only interfaces present AND positively mapped qualify.
     selected_interface = None
     if host_interface:
-        if host_interface in mapped_interfaces:
+        if host_interface in available_mapped:
             # Explicit selection is honored only when mapping evidence associates
-            # the interface with the KVM2USB device specifically.
+            # the interface with the KVM2USB device and the interface exists here.
             selected_interface = host_interface
-        else:
+        elif host_interface in positively_mapped:
+            issues.append(
+                f"explicit host_interface {host_interface!r} is mapped to KVM2USB "
+                "but is not a detected USBPcap interface on this workstation"
+            )
+        elif host_interface in interfaces:
             issues.append(
                 f"explicit host_interface {host_interface!r} has no mapping evidence "
                 "associating it with the KVM2USB device; provide interface_mapping"
             )
-    elif len(mapped_interfaces) == 1:
-        # Auto-select only when exactly one interface is positively mapped.
-        selected_interface = mapped_interfaces[0]
+        else:
+            issues.append(f"explicit host_interface {host_interface!r} is not a detected USBPcap interface")
+    elif len(available_mapped) == 1:
+        # Auto-select only when exactly one interface is positively mapped AND
+        # present on the workstation.
+        selected_interface = available_mapped[0]
     else:
         if not identity_present:
             issues.append("KVM2USB device identity not detected; cannot associate any interface")
         issues.append(
             "USBPcap interface not selected: require interface->KVM2USB mapping evidence "
-            "(PnP root-hub/extcap/mapping record); do not infer from global device presence"
+            "for an interface present on this workstation; do not infer from global device presence"
         )
-        if len(mapped_interfaces) > 1:
-            issues.append(f"multiple mapped USBPcap interfaces: {mapped_interfaces}; an explicit selection is required")
+        if len(available_mapped) > 1:
+            issues.append(f"multiple mapped USBPcap interfaces: {available_mapped}; an explicit selection is required")
+
+    # Runnable preflight requires the KVM2USB device currently present unless an
+    # offline-only mode is selected.
+    if selected_interface and not identity_present and not offline_only:
+        issues.append(
+            "KVM2USB device not currently detected; runnable preflight requires the "
+            "device present (or select offline-only mode)"
+        )
 
     if not target_state_confirmed:
         issues.append("target-state confirmation not provided (harmless state for the allowed input sequence)")
     if not topology or not topology.get("cable_path") or not topology.get("beagle_position") or not topology.get("target_identity"):
         issues.append("physical topology incomplete (cable path, Beagle position, target identity required)")
+
+    # Complete accepted driver-state evidence is required; missing/`unknown`
+    # values are rejected rather than silently recorded.
+    driver_ok, driver_reason = _driver_evidence_ok(driver_state)
+    if not driver_ok:
+        issues.append(driver_reason)
+
+    # Output root must be contained under the approved ignored/private root and
+    # git-ignored, both for preflight and before any manifest output.
+    output_path_result = verify_output_path(output_root, repo_root=root)
+    if not output_path_result["ok"]:
+        issues.append(
+            f"capture output root {output_root!r} is not under an approved ignored/private root: "
+            + "; ".join(output_path_result["errors"])
+        )
 
     human_actions: List[str] = []
     if not usbpcap_cmd or not tshark:
@@ -1347,17 +1572,24 @@ def preflight(
         human_actions.append("install/attach the Total Phase Beagle driver/device")
     if not selected_interface:
         human_actions.append(
-            "provide interface->KVM2USB mapping evidence (PnP root-hub/extcap/mapping record) and select the interface"
+            "provide interface->KVM2USB mapping evidence for an interface present on this "
+            "workstation (PnP root-hub/extcap/mapping record) and select the interface"
         )
+    if selected_interface and not identity_present and not offline_only:
+        human_actions.append("attach the KVM2USB device (or select offline-only mode)")
     if not target_state_confirmed:
         human_actions.append("confirm the target is in a harmless state for the allowed input sequence")
     if not topology or not topology.get("cable_path") or not topology.get("beagle_position") or not topology.get("target_identity"):
         human_actions.append("record physical topology: cable path, Beagle position, target identity")
+    if not driver_ok:
+        human_actions.append("record complete accepted official-app and Beagle driver-state evidence")
+    if not output_path_result["ok"]:
+        human_actions.append("use an output root under the approved ignored/private evidence root (.work/...)")
 
+    # Capture commands are emitted only after every related gate passes.
     command_output: Dict[str, Any] = {}
-    if selected_interface:
+    if not issues:
         command_output["usbpcap"] = usbpcap_command(selected_interface, Path(output_root) / "host.pcap")
-    if beagle_api_dir:
         command_output["beagle"] = beagle_command(
             Path(output_root) / "target.jsonl",
             api_dir=beagle_api_dir,
@@ -1379,6 +1611,7 @@ def preflight(
             "topology": topology,
             "driver_state": driver_state,
             "interface_mapping": mapping,
+            "offline_only": offline_only,
         },
         "selected_host_interface": selected_interface,
         "issues": issues,
@@ -1439,6 +1672,7 @@ def _preflight_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         topology=topology,
         driver_state=driver_state,
         interface_mapping=interface_mapping,
+        offline_only=bool(getattr(args, "offline_only", False)),
     )
 
 
@@ -1553,6 +1787,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         subparser.add_argument("--target-identity")
         subparser.add_argument("--official-app-driver")
         subparser.add_argument("--beagle-driver")
+        subparser.add_argument("--offline-only", action="store_true",
+                               help="select offline-only preflight: current KVM2USB device presence is not required")
         subparser.add_argument("--interface-mapping", help='JSON mapping, e.g. \'{"\\\\\\\\\\\\.\\\\USBPcap1":{"device_instance":"USB\\\\VID_2B77&PID_3661\\\\..."}}\'')
     p_pre = list(sub.choices.values())[0] if False else sub.choices.get("preflight")
     p_build = sub.choices.get("build-manifest")
@@ -1575,7 +1811,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_ver.add_argument("--experiment-id", required=True)
     p_ver.add_argument("--repository", required=True)
     p_ver.add_argument("--issue", type=int, required=True)
-    p_ver.add_argument("--human-authority", default="")
+    p_ver.add_argument("--human-authority", required=True,
+                       help="approved human authority (GitHub login) that must have posted the authorizing comment; required, never optional")
     p_ver.add_argument("--expected-comment-id",
                        help="expected comment id; compared against the envelope (never creates authorization)")
     p_ver.add_argument("--expected-target",
