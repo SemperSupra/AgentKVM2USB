@@ -7,17 +7,24 @@ Authoritative current state: `docs/EXECUTION_CHECKPOINT.md` and `docs/ACTIVE_WOR
 ## Completed foundation
 
 - [x] PR #26 merged the issue #22 readiness collector and fail-closed no-live framework.
-- [x] PR #28 merged the issue #27 operator dependency workflow at `5a398ac`.
+- [x] PR #28 merged the issue #27 operator dependency workflow.
+- [x] PR #32 merged the multi-agent execution checkpoint at `e9f0abd73570bd44e5b00a95e81167b20f4524d1`; issue #31 is complete.
 - [x] The shared UAC helper trust boundary, HTTPS provenance, and Epiphan signature binding are implemented.
-- [x] GitHub Actions CI is active; post-merge run `31114396438` passed 254 tests and reproducible-build verification.
+- [x] Package Foundry Gate 1 merged in `SemperSupra/windows-package-foundry-private` at `6f86487d2b6a4aafb37b1eb82e53f0529fa8d0de`.
+- [x] Gate 1 excludes `manual_vendor` and `blocked` candidates from both public and private deployment output.
+- [x] `SemperSupra/windows-package-foundry` is documented as the generated public projection; issue work belongs in `windows-package-foundry-private`.
 
 ## Current critical path
 
-1. [ ] **Issue #31 — Post-merge coordination reconciliation**
-   - publish the execution checkpoint and lane-specific prompts;
-   - remove stale draft/unvalidated PR #28 language;
-   - add documentation drift guards;
-   - merge after hosted CI.
+1. [ ] **Windows Package Foundry private #2 — USBPcap**
+   - work in `SemperSupra/windows-package-foundry-private`;
+   - verify the current authoritative upstream release and whether an adequate public WinGet package exists;
+   - establish immutable provenance, SHA-256, Authenticode and driver-signing state;
+   - establish supported Windows 11 install, detection, reinstall/upgrade, reboot, uninstall, and rollback behavior;
+   - validate first on a disposable or recoverable Windows environment;
+   - classify USBPcap `foundry_eligible`, `manual_vendor`, or `blocked` from evidence;
+   - publish a package only when the Gate 1 rules and disposable-host evidence pass;
+   - approve a manual-install exception only when the exact installer, verification, and rollback procedure are reviewed.
 
 2. [ ] **Issue #27 — Operator prerequisites**
    - run `-Plan`;
@@ -25,19 +32,9 @@ Authoritative current state: `docs/EXECUTION_CHECKPOINT.md` and `docs/ACTIVE_WOR
    - install exact `WiresharkFoundation.Wireshark` through the shared human-gated UAC helper;
    - stage authorized Total Phase API files under ignored `.work/vendor/totalphase/`;
    - stage and signature-verify the authorized Epiphan installer under ignored `.work/vendor/epiphan/`;
-   - never install USBPcap by an ad hoc path.
+   - do not install USBPcap until private Foundry issue #2 approves the exact path.
 
-3. [ ] **Windows Package Foundry #1 — Eligibility policy**
-   - implement `existing_winget`, `foundry_eligible`, `manual_vendor`, and `blocked`;
-   - exclude authenticated, personalized, expiring, and license-incompatible artifacts;
-   - record AgentKVM2USB dependencies as worked examples.
-
-4. [ ] **Windows Package Foundry #2 — USBPcap**
-   - complete provenance, signing, Windows 11, silent-install, detection, reboot, uninstall, and rollback analysis;
-   - validate first on a disposable or recoverable Windows environment;
-   - publish only after #1 classifies it `foundry_eligible`.
-
-5. [ ] **Issue #22 — Readiness completion**
+3. [ ] **Issue #22 — Readiness completion**
    - begin only after every dependency entry gate passes;
    - use fresh branch `issue-22-readiness-completion`;
    - enumerate USBPcap interfaces without capture;
@@ -46,25 +43,24 @@ Authoritative current state: `docs/EXECUTION_CHECKPOINT.md` and `docs/ACTIVE_WOR
    - obtain no-live `ok: true` with `live_disabled: true`;
    - generate the experiment manifest.
 
-6. [ ] **Issue #14 — Official-app differential**
+4. [ ] **Issue #14 — Official-app differential**
    - create a new expiring authorization;
    - run the bounded synchronized host/target experiment;
    - keep raw evidence outside Git;
    - identify the first downstream HID divergence.
 
-7. [ ] **PR #13 / issue #8 Phase B**
+5. [ ] **PR #13 / issue #8 Phase B**
    - remain frozen until issue #14 evidence exists;
    - prove target receipt and release-all;
    - integrate only after the hardware gate passes.
 
 ## Work allowed in parallel
 
-- [ ] Windows Package Foundry #1.
-- [ ] Bounded research for Windows Package Foundry #2, subordinate to #1.
-- [ ] Issue #27 operator actions when the operator is present.
+- [ ] Private Foundry issue #2 research and implementation under its own claim.
+- [ ] Issue #27 operator actions when the operator is physically present.
 - [ ] Separately issued offline parser, replay, schema, or documentation work with no hardware or branch overlap.
 
-Each coding/documentation lane requires its own issue, branch, isolated worktree, draft PR, and finite claim. Operator-only execution still requires a finite claim and clean handoff.
+Each coding or documentation lane requires its own issue, branch, isolated worktree, early draft PR, and finite claim. Operator-only execution still requires a finite claim and clean handoff.
 
 ## Next capability increments
 
@@ -91,6 +87,7 @@ No current issue may absorb these implicitly:
 - Resume checkpoint: `docs/EXECUTION_CHECKPOINT.md`
 - Active lanes: `docs/ACTIVE_WORKSTREAMS.md`
 - Agent rules: `AGENTS.md`
+- Multi-agent dispatcher: `prompts/MULTI_AGENT_DISPATCH.md`
 - Issue #27 runbook: `docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md`
 - Issue #27 kickoff: `prompts/ISSUE27_KICKOFF.md`
 - Issue #22 runbook: `docs/ISSUE22_OPERATOR_RUNBOOK.md`

@@ -1,28 +1,34 @@
 # Active Workstreams and Multi-Agent Boundaries
 
-This is the authoritative execution map for AgentKVM2USB. The newest GitHub issue comments, finite claims, and remote branch heads override older notes.
+This is the authoritative execution map for AgentKVM2USB. Newer GitHub issue comments, finite claims, and remote branch heads override older notes.
 
 ## Current integration state
 
 - Integration branch: `recovery/agentkvm2usb-app-capabilities`
-- Verified integration head: `5a398ac529d1e050101a6f078153f3935498d6d2`
-- PR #28: merged at `5a398ac`; its implementation branch is historical and must not be reused.
-- Post-merge CI: run `31114396438`, 254 tests passed, PowerShell no-live integration checks passed, portable build reproduced, no artifacts uploaded.
-- Current coordination issue: #31.
+- Verified integration head: `e9f0abd73570bd44e5b00a95e81167b20f4524d1`
+- PR #28 and PR #32 are merged history; their implementation branches must not be reused.
+- Coordination issue #31 is complete.
+- Package Foundry Gate 1 is merged in the private control repo at `6f86487d2b6a4aafb37b1eb82e53f0529fa8d0de`.
 - Do not develop directly on the integration branch.
 
 Read `docs/EXECUTION_CHECKPOINT.md` before accepting or dispatching work.
 
+## Package Foundry authority
+
+- Authoritative control repository: `SemperSupra/windows-package-foundry-private`
+- Generated public deployment projection: `SemperSupra/windows-package-foundry`
+
+Issues #1 and #2, package eligibility decisions, private catalog work, implementation branches, and pull requests belong to the private control repository. Do not dispatch issue work to the generated public projection.
+
 ## Critical path
 
 ```text
-PR #28 merged: issue #27 workflow implemented
+Package Foundry Gate 1 merged
               |
-              +--> operator reboot + Wireshark + vendor staging
+              +--> windows-package-foundry-private #2 USBPcap assessment/package
               |
-windows-package-foundry #1 eligibility
-              |
-              +--> windows-package-foundry #2 USBPcap package
+PR #28 merged + operator present
+              +--> reboot clearance + Wireshark + vendor staging
                                       |
                                       v
 AgentKVM2USB #22 readiness + USBPcap mapping
@@ -60,7 +66,7 @@ Owns:
 
 Does not own:
 
-- USBPcap packaging;
+- USBPcap packaging or installer approval;
 - vendor login or license acceptance automation;
 - capture, target input, recabling, automatic reboot, or persistent device writes;
 - issue #22 mapping;
@@ -69,19 +75,21 @@ Does not own:
 
 ### Lane B — Windows Package Foundry #1
 
-**Repository:** `SemperSupra/windows-package-foundry`
+**Repository:** `SemperSupra/windows-package-foundry-private`
 
-May proceed now on its own issue, branch, worktree, draft PR, and finite claim.
+**Status:** complete and merged at `6f86487d2b6a4aafb37b1eb82e53f0529fa8d0de`.
 
-Owns the four-way package eligibility policy and manual-vendor exclusion registry. It must classify USBPcap before package publication and keep Total Phase/Epiphan manual-only unless licensing evidence changes.
+Gate 1 defines `existing_winget`, `foundry_eligible`, `manual_vendor`, and `blocked`, and excludes prohibited software from public and private deployment output. Do not reopen or duplicate it without new evidence and a dedicated issue.
 
 ### Lane C — Windows Package Foundry #2
 
-**Repository:** `SemperSupra/windows-package-foundry`
+**Repository:** `SemperSupra/windows-package-foundry-private`
 
-May perform bounded research and package design in parallel, but publication and primary-host installation remain subordinate to #1.
+**Status:** next coding/research lane; may start with a fresh finite claim.
 
-Owns USBPcap provenance, signing, Windows support, silent behavior, detection, uninstall, reboot, rollback, and disposable-host validation.
+Owns USBPcap provenance, current upstream version, installer hash, Authenticode and driver-signing state, Windows 11 support, exact supported install/uninstall behavior, detection, reboot handling, rollback, disposable-host validation, eligibility reclassification, and the reviewed consumer path.
+
+The operator has offered to install USBPcap manually. Lane C must first determine whether that is the approved exception and publish the exact reviewed procedure. Do not ask the operator to install it before those gates are documented.
 
 ### Lane D — AgentKVM2USB issue #22
 
@@ -91,7 +99,7 @@ Do not claim #22 until every entry-gate item is positively verified:
 
 - reboot state clear after an operator-initiated restart;
 - Wireshark and TShark present;
-- approved USBPcap installation path complete and `USBPcapCMD.exe` present;
+- approved USBPcap installation complete and `USBPcapCMD.exe` present;
 - Epiphan application/driver state verified;
 - Total Phase API staged with provenance;
 - no conflicting claim.
@@ -125,31 +133,22 @@ Future architecture work under #23, #12, AgentWebCam #3, and #24 must not enter 
 For every active slice:
 
 1. Fetch/prune and inspect the issue, comments, PR, remote head, all worktrees, stashes, detached heads, untracked files, and ahead/behind state.
-2. Preserve all unknown work; never reset, clean, auto-stash, rebase, or force-push to resolve ambiguity.
+2. Preserve all unknown work; never reset, clean, auto-stash, rebase shared work, or force-push.
 3. Run claim preflight and refuse an unexpired conflicting claim.
 4. Post `START` with claim ID, branch/head, scope, safety boundary, and finite lease.
 5. Renew with `CHECKPOINT`.
 6. Verify the expected remote head immediately before push.
 7. Post `HANDOFF`, release the claim, and leave all worktrees clean.
 
-Preferred worktrees:
-
-```text
-C:\Users\Mark\Projects\AgentKVM2USB
-C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-31-multi-agent-resume
-C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-27-operator-actions
-C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-22-readiness-completion
-```
-
 ## Momentum sequence
 
-1. Merge issue #31 documentation reconciliation after hosted CI.
-2. In parallel, execute Windows Package Foundry #1 and bounded #2 work.
+1. Dispatch `SemperSupra/windows-package-foundry-private#2` on a fresh issue-specific branch and claim.
+2. Establish whether USBPcap is `foundry_eligible`, the exact package/manual path, and full rollback evidence.
 3. With the operator present, run issue #27 `-Plan`.
 4. If reboot remains pending, stop and request an operator-initiated restart; rerun `-Plan` under a fresh claim afterward.
 5. Install Wireshark through the shared UAC helper only after explicit human consent.
 6. Stage authorized vendor artifacts only when the operator supplies the exact files and provenance.
-7. After Package Foundry produces an approved USBPcap path, install and verify it through the reviewed workflow.
+7. Request manual USBPcap installation only if issue #2 explicitly approves that path and records exact verification and rollback instructions; otherwise use the reviewed Foundry package.
 8. Claim issue #22 and obtain no-live `ok: true`.
 9. Create a fresh issue #14 authorization and run the bounded experiment.
 10. Revalidate PR #13 target receipt, then advance issue #8 Phase C.
