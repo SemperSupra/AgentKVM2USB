@@ -60,6 +60,7 @@ def test_prompt_preserves_claim_and_safety_boundaries() -> None:
 def test_minimal_kickoff_tracks_remote_branch_safely() -> None:
     text = _read(KICKOFF)
     for required in (
+        "issue #27 and draft PR #28",
         "origin/issue-27-operator-dependencies",
         "git branch --track issue-27-operator-dependencies",
         "git worktree add",
