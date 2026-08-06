@@ -1,163 +1,99 @@
 # AgentKVM2USB Backlog
 
-This file tracks actionable work. Completed investigation history and detailed evidence belong in `PROJECT_STATUS.md`, the capability/strategy documents, GitHub issues, and merged pull requests.
+This file contains actionable work only. Historical evidence belongs in `PROJECT_STATUS.md`, merged pull requests, and issue timelines.
 
-Current multi-agent ownership and sequencing are authoritative in `docs/ACTIVE_WORKSTREAMS.md`.
+Authoritative current state: `docs/EXECUTION_CHECKPOINT.md` and `docs/ACTIVE_WORKSTREAMS.md`.
 
-## Active critical path
+## Completed foundation
 
-1. [ ] **Issue #27 / PR #28 — Operator dependency workflow**
-   - run full local Windows validation;
-   - verify `-Plan` and every `-WhatIf` path are non-privileged and fail closed;
-   - verify trusted discovery of `SupraCraft/minecraft-infra/scripts/local/Invoke-Elevated.ps1`;
-   - review and merge PR #28 after validation.
+- [x] PR #26 merged the issue #22 readiness collector and fail-closed no-live framework.
+- [x] PR #28 merged the issue #27 operator dependency workflow at `5a398ac`.
+- [x] The shared UAC helper trust boundary, HTTPS provenance, and Epiphan signature binding are implemented.
+- [x] GitHub Actions CI is active; post-merge run `31114396438` passed 254 tests and reproducible-build verification.
 
-2. [ ] **Windows Package Foundry #1 — Eligibility policy**
-   - implement `existing_winget`, `foundry_eligible`, `manual_vendor`, and `blocked` dispositions;
-   - exclude authenticated, personalized, expiring, and license-incompatible artifacts from deployment exports.
+## Current critical path
 
-3. [ ] **Windows Package Foundry #2 — USBPcap package assessment**
-   - establish Windows 11 support, signing, provenance, unattended behavior, reboot behavior, uninstall, and rollback;
-   - publish an approved package only if the eligibility and safety gates pass.
+1. [ ] **Issue #31 — Post-merge coordination reconciliation**
+   - publish the execution checkpoint and lane-specific prompts;
+   - remove stale draft/unvalidated PR #28 language;
+   - add documentation drift guards;
+   - merge after hosted CI.
 
-4. [ ] **Issue #27 — Operator dependency actions**
-   - install exact public WinGet package `WiresharkFoundation.Wireshark` through the shared human-gated UAC helper;
-   - install USBPcap only through the approved Package Foundry path;
-   - stage authorized Total Phase files beneath ignored `.work/vendor/totalphase/`;
-   - stage and, when explicitly approved, run the exact authorized Epiphan installer beneath ignored `.work/vendor/epiphan/`;
-   - verify applications, tools, drivers, hashes, signatures, and any post-reboot state.
+2. [ ] **Issue #27 — Operator prerequisites**
+   - run `-Plan`;
+   - when reported, perform an operator-initiated restart and verify reboot state is clear;
+   - install exact `WiresharkFoundation.Wireshark` through the shared human-gated UAC helper;
+   - stage authorized Total Phase API files under ignored `.work/vendor/totalphase/`;
+   - stage and signature-verify the authorized Epiphan installer under ignored `.work/vendor/epiphan/`;
+   - never install USBPcap by an ad hoc path.
 
-5. [ ] **Issue #22 — Readiness completion and USBPcap mapping**
-   - start on a fresh `issue-22-readiness-completion` branch after the dependency entry gate passes;
+3. [ ] **Windows Package Foundry #1 — Eligibility policy**
+   - implement `existing_winget`, `foundry_eligible`, `manual_vendor`, and `blocked`;
+   - exclude authenticated, personalized, expiring, and license-incompatible artifacts;
+   - record AgentKVM2USB dependencies as worked examples.
+
+4. [ ] **Windows Package Foundry #2 — USBPcap**
+   - complete provenance, signing, Windows 11, silent-install, detection, reboot, uninstall, and rollback analysis;
+   - validate first on a disposable or recoverable Windows environment;
+   - publish only after #1 classifies it `foundry_eligible`.
+
+5. [ ] **Issue #22 — Readiness completion**
+   - begin only after every dependency entry gate passes;
+   - use fresh branch `issue-22-readiness-completion`;
    - enumerate USBPcap interfaces without capture;
-   - positively map the exact KVM2USB device and USB topology to the selected USBPcap root hub;
-   - record physical topology, Beagle placement, target identity, and harmless target state;
-   - obtain no-live `preflight` result `ok: true` with `live_disabled: true`;
-   - generate the experiment manifest without capture or target input.
+   - prove the exact KVM2USB-to-root-hub mapping;
+   - record physical topology and harmless target state;
+   - obtain no-live `ok: true` with `live_disabled: true`;
+   - generate the experiment manifest.
 
-6. [ ] **Issue #14 — Authorized official-app differential experiment**
-   - create a fresh experiment-specific authorization with exact target, interfaces, allowed input, output root, issued/expiry UTC, stop conditions, and forbidden actions;
-   - perform the bounded synchronized experiment;
-   - preserve raw evidence outside Git and publish only sanitized findings.
+6. [ ] **Issue #14 — Official-app differential**
+   - create a new expiring authorization;
+   - run the bounded synchronized host/target experiment;
+   - keep raw evidence outside Git;
+   - identify the first downstream HID divergence.
 
-7. [ ] **PR #13 / issue #8 Phase B — Keyboard target receipt**
-   - keep the branch frozen until issue #14 evidence is available;
-   - prove representative keyboard receipt at the target;
-   - resolve the missing target-side HID forwarding/activation behavior;
-   - update and integrate the keyboard work only after the evidence gate passes.
+7. [ ] **PR #13 / issue #8 Phase B**
+   - remain frozen until issue #14 evidence exists;
+   - prove target receipt and release-all;
+   - integrate only after the hardware gate passes.
 
-8. [ ] **Issue #8 Phases C–E — One-KVM pointer completion and multi-device identity**
-   - relative mouse semantics and target receipt;
-   - pen/touch semantics and target receipt;
-   - stable physical grouping of HID, UVC, and MI_00;
-   - persistent KVM IDs independent of camera indices;
-   - no-mixing validation and isolated per-device sessions;
-   - two-KVM concurrency and reconnect/soak testing.
+## Work allowed in parallel
 
-9. [ ] **Issue #12 — Multi-target control plane**
-   - one supervised worker per physical KVM;
-   - `TargetBundle` registry;
-   - target-addressed API;
-   - per-target lease, emergency stop, and evidence correlation.
+- [ ] Windows Package Foundry #1.
+- [ ] Bounded research for Windows Package Foundry #2, subordinate to #1.
+- [ ] Issue #27 operator actions when the operator is present.
+- [ ] Separately issued offline parser, replay, schema, or documentation work with no hardware or branch overlap.
 
-10. [ ] **AgentWebCam #3 — General media and controller-side speech**
-    - stable camera, microphone, and speaker identities;
-    - media workers and local API;
-    - target/media association;
-    - voice notes and STT;
-    - TTS feedback and safe voice-command interpretation.
+Each coding/documentation lane requires its own issue, branch, isolated worktree, draft PR, and finite claim. Operator-only execution still requires a finite claim and clean handoff.
 
-11. [ ] **Issue #24 — Controlled-target audio**
-    - characterize any real KVM2USB audio stream;
-    - design external USB audio fallback;
-    - implement target-associated capture/playback/injection only after privacy and routing gates are defined.
+## Next capability increments
 
-## Work that may proceed in parallel
+- [ ] Issue #8 Phase C: generic relative mouse.
+- [ ] Issue #8 Phase D: distinct pen/touch semantics.
+- [ ] Issue #8 Phase E: stable physical grouping, reconnect, and two-KVM no-mixing validation.
+- [ ] Issue #12: isolated workers, `TargetBundle`, target-addressed API, leases, and emergency stop.
+- [ ] AgentWebCam #3: stable media IDs, camera/audio workers, voice notes, STT, and TTS.
+- [ ] Issue #24: explicit controlled-target audio capability and adapter fallback.
+- [ ] Epic #23: 2–4 target scale, bandwidth policy, dashboard, quotas, and soak tests.
 
-- [ ] Local validation and review of PR #28.
-- [ ] Windows Package Foundry #1 and #2 in the separate repository.
-- [ ] Offline-only parser, replay, schema, and documentation work that does not alter the active device or overlap an issued claim.
-- [ ] Static FPGA bitstream analysis using existing non-proprietary tooling and ignored evidence.
-- [ ] UVC/DirectShow capability comparison using already recorded sanitized data.
+## Deferred high-risk work
 
-Every parallel slice still requires its own issue, branch, worktree, draft PR, and finite claim.
+No current issue may absorb these implicitly:
 
-## Blocked until the critical path advances
-
-- [ ] **MI_00 official-tool protocol confirmation** — requires the approved capture path and issue #14 authorization.
-- [ ] **Harmless HID injection validation** — requires target-side forwarding activation and an explicit safe target gate.
-- [ ] **Wyse BIOS automation mapping** — requires confirmed HID target receipt.
-- [ ] **Multi-KVM dashboard** — requires stable physical grouping and target-addressed routing.
-- [ ] **Vision-conditional macros and OCR actions** — require a reliable single-target control loop and authorization model.
-- [ ] **Voice commands that can cause HID actions** — require explicit target selection, confidence refusal, confirmation, lease enforcement, and emergency stop.
-
-## Open protocol and diagnostics work
-
-- [ ] Confirm whether UVC/DirectShow advertised modes change across target resolutions, adapter chains, host ports, and multiple KVM2USB units.
-- [ ] Complete packet-level FPGA bitstream decoding and validate register/CRC/frame interpretations against authoritative references.
-- [ ] Extract raw VGA/DVI timing diagnostics where the hardware exposes them.
-- [ ] Continue structured hardware-probe improvements without adding implicit live actions.
-- [ ] Define persistent non-secret profile storage outside the repository.
-- [ ] Validate the portable Windows ZIP on a clean Windows 11 host.
-
-## Multi-device, media, audio, and speech bring-up
-
-Canonical roadmap: issue #23 and `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`.
-
-### Stable KVM identity — issue #8 Phase E
-
-- [ ] Group MI_00, MI_01/UVC, MI_03/HID collections by serial, PnP ContainerId, parent composite device, location path, controller, hub, and port.
-- [ ] Reject ambiguous, partial, duplicate, inaccessible, or cross-device collection sets.
-- [ ] Maintain independent handles, locks, release-all behavior, runtime roots, and reconnect state.
-- [ ] Record topology evidence for USB bandwidth policy.
-
-### Multi-target orchestration — issue #12
-
-- [ ] Supervise one worker with exclusive UVC/HID ownership per physical KVM.
-- [ ] Associate target, KVM, auxiliary cameras, audio devices, evidence roots, lease, and authorization.
-- [ ] Replace implicit single-device routes with `/targets/{target_id}/...`.
-- [ ] Correlate actions, screenshots/video, auxiliary media, voice notes, and results by UTC and correlation ID.
-
-### Media and speech — AgentWebCam #3
-
-- [ ] Stable media-device IDs rather than transient indices.
-- [ ] Concurrent snapshot, video, timelapse, microphone recording, stop, health, and playback operations.
-- [ ] Push-to-talk voice notes with transcript, confidence, provider provenance, target, and UTC.
-- [ ] Explicit TTS speaker routing and cancellation.
-- [ ] Separate note and command modes; prevent TTS-to-STT command feedback.
-
-### Controlled-target audio — issue #24
-
-- [ ] Determine whether KVM2USB exposes a usable audio capture/playback stream; do not infer this from the recovered selector flag.
-- [ ] Provide target-associated external USB audio adapters when the native path is absent or unsuitable.
-- [ ] Add capability, capture, playback, injection, stop/mute, health, latency, and correlation APIs.
-- [ ] Validate synchronization, clipping, feedback, hidden-capture prevention, retention, and operator indicators.
-
-### Scale and reliability
-
-- [ ] Controller-aware full-rate, reduced-rate, and snapshot-only policies.
-- [ ] Two-to-four target dashboard after stable IDs and target-addressed routing pass.
-- [ ] Long-duration reconnect/soak testing with resource quotas and evidence-retention limits.
-
-## High-risk deferred work
-
-These items remain intentionally blocked behind separate design, authorization, recovery, and rollback gates:
-
-- [ ] Custom firmware flasher.
-- [ ] Custom firmware builder/signing/checksum pipeline.
-- [ ] Custom FPGA builder and compatibility validation.
-- [ ] Raw EDID injector.
-- [ ] Unknown vendor OUT transfers or persistent device writes.
-
-No active issue may absorb these tasks implicitly.
+- [ ] firmware flasher or updater;
+- [ ] firmware/FPGA build or signing pipeline;
+- [ ] raw EDID injection;
+- [ ] unknown vendor OUT transfers;
+- [ ] persistent device-state changes without dedicated authorization and rollback.
 
 ## Documentation index
 
-- Current execution and lane ownership: `docs/ACTIVE_WORKSTREAMS.md`
-- Current hardware and investigation history: `PROJECT_STATUS.md`
-- Multi-device/media/speech roadmap: `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`
-- Issue #27 operator workflow: `docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md`
-- Issue #22 readiness/mapping workflow: `docs/ISSUE22_OPERATOR_RUNBOOK.md`
-- Input strategy: `docs/INPUT_PATH_STRATEGY.md`
-- Backend/persona architecture: `docs/BACKEND_AND_TARGET_PERSONA_EXTENSIBILITY.md`
-- Runtime/reverse-engineering handoff: `docs/ISSUE14_RUNTIME_HANDOFF.md`
+- Resume checkpoint: `docs/EXECUTION_CHECKPOINT.md`
+- Active lanes: `docs/ACTIVE_WORKSTREAMS.md`
+- Agent rules: `AGENTS.md`
+- Issue #27 runbook: `docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md`
+- Issue #27 kickoff: `prompts/ISSUE27_KICKOFF.md`
+- Issue #22 runbook: `docs/ISSUE22_OPERATOR_RUNBOOK.md`
+- Issue #22 kickoff: `prompts/ISSUE22_KICKOFF.md`
+- Long-term roadmap: `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`
+- Historical hardware evidence: `PROJECT_STATUS.md`
