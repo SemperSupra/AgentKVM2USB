@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+KICKOFF = ROOT / "prompts" / "ISSUE22_KICKOFF.md"
 PROMPT = ROOT / "prompts" / "ISSUE22_WORKSTATION_CAPTURE_DEPS.md"
 RUNBOOK = ROOT / "docs" / "ISSUE22_OPERATOR_RUNBOOK.md"
 COLLECTOR = ROOT / "scripts" / "collect_issue22_readiness.ps1"
@@ -13,8 +14,21 @@ def _read(path: Path) -> str:
 
 
 def test_issue22_work_package_files_exist() -> None:
-    for path in (PROMPT, RUNBOOK, COLLECTOR):
+    for path in (KICKOFF, PROMPT, RUNBOOK, COLLECTOR):
         assert path.is_file()
+
+
+def test_minimal_kickoff_tracks_remote_branch_safely() -> None:
+    text = _read(KICKOFF)
+    for required in (
+        "origin/issue-22-workstation-capture-deps",
+        "git branch --track issue-22-workstation-capture-deps",
+        "git worktree add",
+        "Run claim preflight",
+        "Do not install, elevate, capture, send input, recable",
+        "PR #26",
+    ):
+        assert required in text
 
 
 def test_prompt_preserves_claim_and_safety_boundaries() -> None:
