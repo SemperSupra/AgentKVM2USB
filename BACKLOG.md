@@ -1,99 +1,163 @@
 # AgentKVM2USB Backlog
 
-This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap) for implementation.
+This file tracks actionable work. Completed investigation history and detailed evidence belong in `PROJECT_STATUS.md`, the capability/strategy documents, GitHub issues, and merged pull requests.
 
-## Device Investigation Priorities
-- [x] **Program Separation:** PR `#6` was restored to packaging baseline scope and merged. The private evidence vault and private-first clean `OpenKVM2USB` repository were created and seeded.
-- [ ] **Provenance Manifests:** Use `manifests/artifact.schema.yaml`, `manifests/experiment.schema.yaml`, and `manifests/environment.schema.yaml` for evidence-vault and reproducible-build records.
-- [x] **Live Mode HID Report:** Map the observed KVM2USB 3.0 live mode report. Usage `0x103`, feature report `3`, returns `width_le16`, `height_le16`, and an active flag. Verified with `1920x1080 active`.
-- [x] **Structured Hardware Probe v2:** Extend `hardware_probe.py` to emit HID collection metadata, status source, UVC ownership/open state, frame statistics, and effective signal inference in one JSON document.
-- [x] **Initial UVC / DirectShow Capability Map:** Enumerate supported formats, resolutions, frame rates, actual backend, FOURCC, and camera-open failure cases. Prefer stable camera selection by device name over index. See `VIDEO_PIPELINE.md`.
-- [ ] **UVC / DirectShow Follow-Up:** Confirm whether the advertised mode list changes with different target resolutions, adapter chains, or USB host ports.
-- [x] **Trace Replay Foundation:** Add deterministic experiment-directory replay helpers for descriptors, device status, and host JSONL logs.
-- [x] **HID Report Map:** Recover KVM2USB 3.0 keyboard, mouse, touch, live-size, touch-type, and re-enumerate report IDs/lengths from Linux vendor-app disassembly. SDK keyboard, relative mouse, and touch framing now follows the vendor report IDs with legacy fallbacks. Keep live write-path validation deferred until a human approves a hardware-safe target session.
-- [x] **Recovered Capability Matrix:** Document recovered app, driver, firmware, HID, and config-interface features in `RECOVERED_CAPABILITIES.md`.
-- [x] **MI_00 Config Interface Probe:** Built and live-validated after user approval on 2026-08-03. The official Epiphan INF binds `VID_2B77&PID_3661&MI_00` to WinUSB, and `scripts/probe_mi00_config.py` performs guarded read-only PyUSB/libusb requests around interface GUID `{9f543223-cede-4fa3-b376-a25ce9a30e74}`. Live-validated requests: vendor IN `0xB2` input status, `0xB3` user mode, and `0xE2` device flags only. Do not send `0x40` OUT requests, update requests, EDID writes, or flash writes.
-- [x] **MI_00 SDK/Probe Integration:** `EpiphanKVM_SDK.get_config_status()`, `get_device_health(include_mi00=True)`, `hardware_probe.py --include-mi00`, and GUI Tools -> Read Config Status now expose the guarded read-only config status path, including all three `0xB3` user-mode slots.
-- [x] **MI_00 Experiment Capture:** `scripts/capture_mi00_experiment.py` writes deterministic read-only MI_00 experiment directories with `metadata.yaml`, `descriptors.json`, `device-status.json`, `mi00-status.json`, and `host-log.jsonl`; `scripts/summarize_trace.py` now summarizes MI_00 captures for replay and USBPcap correlation.
-- [x] **Capture Compression UX:** Rename the old GUI Performance Mode toggle to `Request MJPG Capture`, keep it limited to local UVC/OpenCV FOURCC requests, and leave the recovered MI_00 performance flag read-only.
-- [ ] **MI_00 Protocol Confirmation:** Capture official configuration-tool USBPcap traces for the now-live read paths, then compare request values, indexes, payloads, and parsed values against the clean probe.
-- [x] **Vendor Config Request Map:** Static disassembly confirms config requests `0xB2`, `0xB3`, `0xE2`, `0xE3`, and update/EDID requests including `0xA0`, `0xC4`, `0xC5`, and `0xD4`. `InputStatusInfo`, `UserMode`, and device flag payloads are mapped and exposed through offline parser/building helpers plus `scripts/inspect_epiphan_config.py`. Next step is USBPcap confirmation of read-only official-tool actions before implementing a live probe.
-- [x] **FX3 Firmware Container Parser:** Add offline Cypress FX3 `.img` parsing, checksum validation, entry address recovery, and request `0xA0` chunk planning. See `FIRMWARE_UPDATE_RECOVERY.md`.
-- [ ] **FPGA Bitstream Packet Decoder:** First-pass decoder now normalizes the bit-reversed FPGA payload to canonical Xilinx sync `aa 99 55 66` and emits packet-like records, opcode counts, and truncation flags. Continue with UG380/TORC cross-checking before treating register names, CRC behavior, or frame boundaries as authoritative.
-- [x] **Signal Health Model:** Distinguish HID-reported signal, UVC stream-open state, latest-frame presence, blank-frame detection, and stale-frame detection in SDK/GUI status.
-- [ ] **Wyse BIOS Automation Map:** Current video capture is healthy and the Wyse boot-failure screen is visible. The Beagle-12 now proves the Wyse-facing USB leg is present and polling KVM2USB address `23` endpoint `2`, but synchronized Caps Lock macro captures produced only `IN/NAK` traffic and zero HID data packets. Next priority is identifying the missing KVM2USB target-side HID forwarding or activation step, then mapping setup pages.
-- [ ] **Harmless HID Injection Validation:** Validate keyboard, mouse, touch, touch-type, re-enumerate, and macro behavior against safe firmware screens or a sacrificial OS session. Prefer `sdk.run_macro()` for sequences.
+Current multi-agent ownership and sequencing are authoritative in `docs/ACTIVE_WORKSTREAMS.md`.
 
-## High-Risk / Low-Priority
-- [ ] **Custom Firmware Flasher:** Reverse engineer and validate firmware/update flows. Static analysis has identified request IDs, but implementation remains deferred high-risk work.
-- [ ] **Custom Firmware Builder:** Define a reproducible offline build/sign/checksum pipeline for custom FX3 images before any live updater exists.
-- [ ] **Custom FPGA Builder:** Identify FPGA family/toolchain constraints and bitstream compatibility before any live FPGA update support exists.
-- [ ] **Custom EDID Injector:** Implement raw EDID writes only after read-only EDID extraction and a hardware-safe write/rollback plan are approved. Current `0xA0` evidence is chunked write/read-verify update machinery, not a safe live EDID read API.
-- [ ] **Signal Diagnostics:** Extract raw VGA/DVI sync timing parameters (H-Sync, V-Sync, Phase) programmatically.
+## Active critical path
 
-## Automation States
-- [ ] **State Detection Templates:** Pre-captured images of the Spartan-6 / FX3 boot screens for automated state detection.
+1. [ ] **Issue #27 / PR #28 — Operator dependency workflow**
+   - run full local Windows validation;
+   - verify `-Plan` and every `-WhatIf` path are non-privileged and fail closed;
+   - verify trusted discovery of `SupraCraft/minecraft-infra/scripts/local/Invoke-Elevated.ps1`;
+   - review and merge PR #28 after validation.
 
-## Agent-Ready Feature Pipeline
-- [x] **Named Macro Library:** Add a persistent gallery for saved DSL scripts with SDK save/list/get/delete/run APIs, dry-run validation, `AGENTKVM2USB_PROFILE_ROOT`, and GUI Macro Editor controls.
-- [ ] **Vision-Conditional Macros:** Extend DSL with `WAIT_FOR_MOTION`, `WAIT_FOR_SIGNAL`, or `IF_MOTION_STOP` for feedback-loop automation.
-- [x] **Remote Control API (Headless Mode):** Add a dependency-free local JSON API for status, health, frame metadata/JPEG, macro listing, macro execution, named macro execution, and macro validation.
-- [ ] **OCR Integration:** Integrate `pytesseract` or `easyocr` to enable `WAIT_FOR_TEXT "Welcome"` and searchable screen content.
-- [ ] **Multi-KVM Dashboard:** Support a grid-view mode for users with 2-4 devices connected to a single host. This is Phase 7 work in issue #23 and must follow stable physical grouping, isolated workers, and target-addressed API routing.
+2. [ ] **Windows Package Foundry #1 — Eligibility policy**
+   - implement `existing_winget`, `foundry_eligible`, `manual_vendor`, and `blocked` dispositions;
+   - exclude authenticated, personalized, expiring, and license-incompatible artifacts from deployment exports.
 
-## Testability and Repository Hygiene
-- [ ] **Structured Hardware Probe:** Keep expanding the script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, frame statistics, and sample capture path.
-- [x] **Structured Macro Results:** Return parse/runtime errors and HID write results from `run_macro()` instead of only printing them.
-- [x] **HID Path Experiment Capture:** Add `scripts/capture_hid_path_experiment.py` so host macro timestamps, HID descriptors, status, macro write results, and screen snapshots can be correlated with Beagle-12 target-side captures.
-- [x] **Beagle USB12 Capture Automation:** Add `scripts/capture_beagle_usb12.py` for Total Phase Beagle API captures, USB PID/token decoding, endpoint summaries, and JSONL evidence files outside Git.
-- [x] **Configurable Session Output Root:** Lab automation can override the default `runtime_sessions/` root with `EpiphanKVM_SDK(runtime_root=...)`, `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
-- [ ] **Persistent Profile Store:** Decide whether non-secret user presets should remain per-run or be promoted to a user profile directory outside the repository.
-- [ ] **Clean Windows Smoke Test:** Validate the portable ZIP on a clean Windows 11 machine with no repository checkout.
+3. [ ] **Windows Package Foundry #2 — USBPcap package assessment**
+   - establish Windows 11 support, signing, provenance, unattended behavior, reboot behavior, uninstall, and rollback;
+   - publish an approved package only if the eligibility and safety gates pass.
 
-## Multi-Device, Media, Audio, and Speech Future Work
+4. [ ] **Issue #27 — Operator dependency actions**
+   - install exact public WinGet package `WiresharkFoundation.Wireshark` through the shared human-gated UAC helper;
+   - install USBPcap only through the approved Package Foundry path;
+   - stage authorized Total Phase files beneath ignored `.work/vendor/totalphase/`;
+   - stage and, when explicitly approved, run the exact authorized Epiphan installer beneath ignored `.work/vendor/epiphan/`;
+   - verify applications, tools, drivers, hashes, signatures, and any post-reboot state.
+
+5. [ ] **Issue #22 — Readiness completion and USBPcap mapping**
+   - start on a fresh `issue-22-readiness-completion` branch after the dependency entry gate passes;
+   - enumerate USBPcap interfaces without capture;
+   - positively map the exact KVM2USB device and USB topology to the selected USBPcap root hub;
+   - record physical topology, Beagle placement, target identity, and harmless target state;
+   - obtain no-live `preflight` result `ok: true` with `live_disabled: true`;
+   - generate the experiment manifest without capture or target input.
+
+6. [ ] **Issue #14 — Authorized official-app differential experiment**
+   - create a fresh experiment-specific authorization with exact target, interfaces, allowed input, output root, issued/expiry UTC, stop conditions, and forbidden actions;
+   - perform the bounded synchronized experiment;
+   - preserve raw evidence outside Git and publish only sanitized findings.
+
+7. [ ] **PR #13 / issue #8 Phase B — Keyboard target receipt**
+   - keep the branch frozen until issue #14 evidence is available;
+   - prove representative keyboard receipt at the target;
+   - resolve the missing target-side HID forwarding/activation behavior;
+   - update and integrate the keyboard work only after the evidence gate passes.
+
+8. [ ] **Issue #8 Phases C–E — One-KVM pointer completion and multi-device identity**
+   - relative mouse semantics and target receipt;
+   - pen/touch semantics and target receipt;
+   - stable physical grouping of HID, UVC, and MI_00;
+   - persistent KVM IDs independent of camera indices;
+   - no-mixing validation and isolated per-device sessions;
+   - two-KVM concurrency and reconnect/soak testing.
+
+9. [ ] **Issue #12 — Multi-target control plane**
+   - one supervised worker per physical KVM;
+   - `TargetBundle` registry;
+   - target-addressed API;
+   - per-target lease, emergency stop, and evidence correlation.
+
+10. [ ] **AgentWebCam #3 — General media and controller-side speech**
+    - stable camera, microphone, and speaker identities;
+    - media workers and local API;
+    - target/media association;
+    - voice notes and STT;
+    - TTS feedback and safe voice-command interpretation.
+
+11. [ ] **Issue #24 — Controlled-target audio**
+    - characterize any real KVM2USB audio stream;
+    - design external USB audio fallback;
+    - implement target-associated capture/playback/injection only after privacy and routing gates are defined.
+
+## Work that may proceed in parallel
+
+- [ ] Local validation and review of PR #28.
+- [ ] Windows Package Foundry #1 and #2 in the separate repository.
+- [ ] Offline-only parser, replay, schema, and documentation work that does not alter the active device or overlap an issued claim.
+- [ ] Static FPGA bitstream analysis using existing non-proprietary tooling and ignored evidence.
+- [ ] UVC/DirectShow capability comparison using already recorded sanitized data.
+
+Every parallel slice still requires its own issue, branch, worktree, draft PR, and finite claim.
+
+## Blocked until the critical path advances
+
+- [ ] **MI_00 official-tool protocol confirmation** — requires the approved capture path and issue #14 authorization.
+- [ ] **Harmless HID injection validation** — requires target-side forwarding activation and an explicit safe target gate.
+- [ ] **Wyse BIOS automation mapping** — requires confirmed HID target receipt.
+- [ ] **Multi-KVM dashboard** — requires stable physical grouping and target-addressed routing.
+- [ ] **Vision-conditional macros and OCR actions** — require a reliable single-target control loop and authorization model.
+- [ ] **Voice commands that can cause HID actions** — require explicit target selection, confidence refusal, confirmation, lease enforcement, and emergency stop.
+
+## Open protocol and diagnostics work
+
+- [ ] Confirm whether UVC/DirectShow advertised modes change across target resolutions, adapter chains, host ports, and multiple KVM2USB units.
+- [ ] Complete packet-level FPGA bitstream decoding and validate register/CRC/frame interpretations against authoritative references.
+- [ ] Extract raw VGA/DVI timing diagnostics where the hardware exposes them.
+- [ ] Continue structured hardware-probe improvements without adding implicit live actions.
+- [ ] Define persistent non-secret profile storage outside the repository.
+- [ ] Validate the portable Windows ZIP on a clean Windows 11 host.
+
+## Multi-device, media, audio, and speech bring-up
 
 Canonical roadmap: issue #23 and `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`.
 
-### Critical-path guard
+### Stable KVM identity — issue #8 Phase E
 
-- [ ] **Complete Single-Device Bring-Up First:** Complete issue #22, issue #14, PR #13, and issue #8 Phase B before starting multi-device or speech implementation.
-- [ ] **Finish One-KVM Pointer Semantics:** Complete issue #8 Phase C relative mouse and Phase D pen/touch with target-receipt validation.
+- [ ] Group MI_00, MI_01/UVC, MI_03/HID collections by serial, PnP ContainerId, parent composite device, location path, controller, hub, and port.
+- [ ] Reject ambiguous, partial, duplicate, inaccessible, or cross-device collection sets.
+- [ ] Maintain independent handles, locks, release-all behavior, runtime roots, and reconnect state.
+- [ ] Record topology evidence for USB bandwidth policy.
 
-### Stable KVM identity and resilience — issue #8 Phase E
+### Multi-target orchestration — issue #12
 
-- [ ] **Physical KVM Grouping:** Group HID, UVC, and MI_00 by serial, PnP ContainerId, parent composite device, location path, hub, and port.
-- [ ] **Stable KVM IDs:** Expose persistent device IDs independent of transient camera indices.
-- [ ] **No-Mixing Selection:** Reject ambiguous, partial, duplicate, inaccessible, and cross-device collection sets.
-- [ ] **Per-Device Session Isolation:** Independent handles, locks, state, runtime roots, release-all, and reconnect behavior.
-- [ ] **Two-KVM Concurrency Test:** Monitor two KVM units and prove harmless input reaches only the selected target.
-- [ ] **USB Topology Evidence:** Record controller/hub/port placement for bandwidth policy.
+- [ ] Supervise one worker with exclusive UVC/HID ownership per physical KVM.
+- [ ] Associate target, KVM, auxiliary cameras, audio devices, evidence roots, lease, and authorization.
+- [ ] Replace implicit single-device routes with `/targets/{target_id}/...`.
+- [ ] Correlate actions, screenshots/video, auxiliary media, voice notes, and results by UTC and correlation ID.
 
-### Multi-target control plane — issue #12
+### Media and speech — AgentWebCam #3
 
-- [ ] **KVM Worker Process:** One supervised worker and exclusive UVC/HID ownership per physical KVM.
-- [ ] **TargetBundle Registry:** Associate target, KVM, KVM video, auxiliary media, audio adapters, session root, lease, and authorization.
-- [ ] **Target-Addressed API:** Replace the implicit single SDK API with `/targets/{target_id}/...` routes.
-- [ ] **Per-Target Lease and Emergency Stop:** Prevent concurrent conflicting control and release all input on stop/failure.
-- [ ] **Evidence Correlation:** Synchronize KVM actions, video, auxiliary media, notes, and results by UTC and correlation ID.
-
-### General media and controller-side speech — SemperSupra/AgentWebCam#3
-
-- [ ] **Stable Camera/Microphone/Speaker IDs:** Do not persist transient device indices.
-- [ ] **Media Workers and API:** Concurrent snapshot, video, timelapse, microphone recording, stop, health, and playback operations.
-- [ ] **Target Media Association:** Map front-panel, room, and status-light cameras to target bundles.
-- [ ] **Voice Notes / STT:** Push-to-talk recording with transcript, confidence, provider provenance, target, UTC, and optional synchronized image.
-- [ ] **TTS Feedback:** Explicit speaker routing, cancellation, structured result, and retention policy.
-- [ ] **Voice Command Safety:** Separate note/command modes, explicit target, confirmation, confidence refusal, stop command, and TTS/STT echo suppression.
+- [ ] Stable media-device IDs rather than transient indices.
+- [ ] Concurrent snapshot, video, timelapse, microphone recording, stop, health, and playback operations.
+- [ ] Push-to-talk voice notes with transcript, confidence, provider provenance, target, and UTC.
+- [ ] Explicit TTS speaker routing and cancellation.
+- [ ] Separate note and command modes; prevent TTS-to-STT command feedback.
 
 ### Controlled-target audio — issue #24
 
-- [ ] **KVM2USB Audio Characterization:** Determine whether a real capture/playback stream exists; do not infer it from the audio-selector flag.
-- [ ] **External USB Audio Fallback:** Stable target-associated capture and injection adapters with no cross-target routing.
-- [ ] **Target Audio API:** Capability, capture, playback, injection, stop/mute, health, latency, and correlation operations.
-- [ ] **A/V and Privacy Validation:** Synchronization, clipping, feedback, hidden-capture prevention, retention, and operator indicators.
+- [ ] Determine whether KVM2USB exposes a usable audio capture/playback stream; do not infer this from the recovered selector flag.
+- [ ] Provide target-associated external USB audio adapters when the native path is absent or unsuitable.
+- [ ] Add capability, capture, playback, injection, stop/mute, health, latency, and correlation APIs.
+- [ ] Validate synchronization, clipping, feedback, hidden-capture prevention, retention, and operator indicators.
 
 ### Scale and reliability
 
-- [ ] **USB Bandwidth Policy:** Controller-aware full-rate, reduced-rate, and snapshot-only profiles.
-- [ ] **Two-to-Four Target Dashboard:** Add only after stable IDs and target-addressed routing pass.
-- [ ] **Soak and Reconnect Testing:** Long-duration multi-KVM/media/audio operation with resource quotas and retention limits.
+- [ ] Controller-aware full-rate, reduced-rate, and snapshot-only policies.
+- [ ] Two-to-four target dashboard after stable IDs and target-addressed routing pass.
+- [ ] Long-duration reconnect/soak testing with resource quotas and evidence-retention limits.
+
+## High-risk deferred work
+
+These items remain intentionally blocked behind separate design, authorization, recovery, and rollback gates:
+
+- [ ] Custom firmware flasher.
+- [ ] Custom firmware builder/signing/checksum pipeline.
+- [ ] Custom FPGA builder and compatibility validation.
+- [ ] Raw EDID injector.
+- [ ] Unknown vendor OUT transfers or persistent device writes.
+
+No active issue may absorb these tasks implicitly.
+
+## Documentation index
+
+- Current execution and lane ownership: `docs/ACTIVE_WORKSTREAMS.md`
+- Current hardware and investigation history: `PROJECT_STATUS.md`
+- Multi-device/media/speech roadmap: `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`
+- Issue #27 operator workflow: `docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md`
+- Issue #22 readiness/mapping workflow: `docs/ISSUE22_OPERATOR_RUNBOOK.md`
+- Input strategy: `docs/INPUT_PATH_STRATEGY.md`
+- Backend/persona architecture: `docs/BACKEND_AND_TARGET_PERSONA_EXTENSIBILITY.md`
+- Runtime/reverse-engineering handoff: `docs/ISSUE14_RUNTIME_HANDOFF.md`
