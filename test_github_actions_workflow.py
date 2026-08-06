@@ -11,6 +11,10 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _normalized_words(text: str) -> str:
+    return " ".join(text.split())
+
+
 def test_ci_files_exist() -> None:
     assert WORKFLOW.is_file()
     assert PLAN.is_file()
@@ -83,7 +87,7 @@ def test_workflow_has_no_privileged_or_hardware_operations() -> None:
 
 
 def test_corrective_plan_records_empty_initial_history_and_cleanup_rules() -> None:
-    text = _read(PLAN)
+    text = _normalized_words(_read(PLAN))
     for required in (
         "zero registered workflows",
         "zero workflow runs",
