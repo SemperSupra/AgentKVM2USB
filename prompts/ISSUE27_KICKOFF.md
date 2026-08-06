@@ -27,7 +27,7 @@ Stage Total Phase or Epiphan files only when the operator supplies the exact aut
 
 After each approved action, rerun -Plan and independently verify paths, versions, drivers, signatures, hashes, provenance, and reboot state.
 
-Do not capture, send target input, recable, modify PR #13, or write firmware/FPGA/EDID/flash/persistent state.
+Do not capture, send target input, recable, or write firmware/FPGA/EDID/flash/persistent state. Do not modify PR #13.
 
 Correct genuine work-package defects only on the fresh branch with deterministic tests and an early draft PR. Finish with exact results, blockers, CHECKPOINT as needed, HANDOFF, claim release, and clean worktrees.
 ```
