@@ -24,20 +24,24 @@ def test_issue27_work_package_files_exist() -> None:
 def test_active_workstreams_define_nonoverlapping_lanes() -> None:
     text = _read(ACTIVE)
     for required in (
-        "Lane A — AgentKVM2USB issue #27",
-        "Lane B — Windows Package Foundry issues #1 and #2",
-        "Lane C — AgentKVM2USB issue #22",
-        "Lane D — AgentKVM2USB issue #14",
-        "Lane E — PR #13 / issue #8 Phase B",
+        "Lane A — Issue #27 operator prerequisites",
+        "Lane B — Windows Package Foundry #1",
+        "Lane C — Windows Package Foundry #2",
+        "Lane D — AgentKVM2USB issue #22",
+        "Lane E — AgentKVM2USB issue #14",
+        "Lane F — PR #13 / issue #8 Phase B",
         "START",
         "CHECKPOINT",
         "HANDOFF",
-        "issue-27-operator-dependencies",
+        "issue-27-operator-actions",
+        "issue-22-readiness-completion",
     ):
         assert required in text
 
+    assert "Active dependency-work PR: draft PR #28" not in text
 
-def test_prompt_preserves_claim_and_safety_boundaries() -> None:
+
+def test_historical_implementation_prompt_preserves_claim_and_safety_boundaries() -> None:
     text = _read(PROMPT)
     for required in (
         "issue-27-operator-dependencies",
@@ -57,18 +61,22 @@ def test_prompt_preserves_claim_and_safety_boundaries() -> None:
         assert required in text
 
 
-def test_minimal_kickoff_tracks_remote_branch_safely() -> None:
+def test_operator_kickoff_uses_fresh_post_merge_execution_path() -> None:
     text = _read(KICKOFF)
     for required in (
-        "issue #27 and draft PR #28",
-        "origin/issue-27-operator-dependencies",
-        "git branch --track issue-27-operator-dependencies",
-        "git worktree add",
+        "PR #28 is merged",
+        "5a398ac529d1e050101a6f078153f3935498d6d2",
+        "Do not reuse or modify the historical issue-27-operator-dependencies branch",
+        "issue-27-operator-actions",
         "Run claim preflight",
+        "operator to restart Windows manually",
         "Do not directly install USBPcap",
         "Do not modify PR #13",
     ):
         assert required in text
+
+    assert "issue #27 and draft PR #28" not in text
+    assert "origin/issue-27-operator-dependencies" not in text
 
 
 def test_script_uses_exact_winget_package_and_shared_helper() -> None:
