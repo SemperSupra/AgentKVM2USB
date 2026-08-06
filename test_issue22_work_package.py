@@ -66,7 +66,11 @@ def test_runbook_delegates_dependency_acquisition() -> None:
         assert required in text
 
     assert "WiresharkFoundation.USBPcap" not in text
-    assert "winget install" not in text.lower()
+    # The runbook delegates acquisition to issue #27 and must not contain a direct
+    # winget install command (e.g. the stale USBPcap package-ID invocation). Match
+    # the command signature, not prose such as "exact WinGet installation of ...".
+    assert "winget install --id" not in text.lower()
+    assert "winget.exe install" not in text.lower()
 
 
 def test_collector_is_fail_closed_and_no_live() -> None:

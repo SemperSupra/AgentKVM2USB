@@ -44,6 +44,8 @@ $UsbPcapPolicyIssue = "SemperSupra/windows-package-foundry#1"
 $UsbPcapPackageIssue = "SemperSupra/windows-package-foundry#2"
 $ExpectedHelperRepository = "SupraCraft/minecraft-infra"
 $HelperRelativePath = "scripts\local\Invoke-Elevated.ps1"
+$TotalPhaseStagingRoot = ".work\vendor\totalphase"
+$EpiphanStagingRoot = ".work\vendor\epiphan"
 
 function Get-UtcTimestamp {
     return [DateTime]::UtcNow.ToString("o")
@@ -324,8 +326,12 @@ function Get-StagedArtifactRecords {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
     $records = @()
-    foreach ($vendor in @("totalphase", "epiphan")) {
-        $root = Join-Path $RepositoryRoot (".work\vendor\" + $vendor)
+    $vendorRoots = [ordered]@{
+        "totalphase" = $TotalPhaseStagingRoot
+        "epiphan" = $EpiphanStagingRoot
+    }
+    foreach ($vendor in @($vendorRoots.Keys)) {
+        $root = Join-Path $RepositoryRoot $vendorRoots[$vendor]
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
         foreach ($metadataFile in @(Get-ChildItem -LiteralPath $root -Filter "*.provenance.json" -File -ErrorAction SilentlyContinue)) {
             try {
@@ -532,7 +538,8 @@ function Stage-VendorArtifact {
     $sourcePageSanitized = Get-SanitizedSourcePage -Value $SourcePage
     $acquiredUtcNormalized = Get-NormalizedAcquiredUtc -Value $AcquiredUtc
     $vendor = if ($StageVendorArtifact -eq "TotalPhaseBeagleApi") { "totalphase" } else { "epiphan" }
-    $destinationRoot = Join-Path $repoFull (".work\vendor\" + $vendor)
+    $stagingRoot = if ($StageVendorArtifact -eq "TotalPhaseBeagleApi") { $TotalPhaseStagingRoot } else { $EpiphanStagingRoot }
+    $destinationRoot = Join-Path $repoFull $stagingRoot
     New-Item -ItemType Directory -Force -Path $destinationRoot | Out-Null
     [void](Assert-GitIgnoredPath -RepositoryRoot $repoFull -CandidatePath $destinationRoot)
 
@@ -574,7 +581,7 @@ function Stage-VendorArtifact {
 }
 
 function Get-VerifiedStagedEpiphanInstaller {
-    $epiphanRoot = Join-Path $repoFull ".work\vendor\epiphan"
+    $epiphanRoot = Join-Path $repoFull $EpiphanStagingRoot
     $full = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $StagedPath).Path)
     if (-not (Test-IsInsidePath -ParentPath $epiphanRoot -CandidatePath $full)) {
         throw "Epiphan installer must be inside ignored .work/vendor/epiphan."

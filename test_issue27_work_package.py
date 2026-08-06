@@ -126,6 +126,21 @@ def test_vendor_staging_is_local_ignored_and_provenance_bound() -> None:
         assert required in text
 
 
+def test_staging_roots_are_explicit_ignored_constants() -> None:
+    text = _read(SCRIPT)
+    # The two vendor staging roots must be explicit named constants (so the exact
+    # ignored paths are auditable) and must be consumed from those constants
+    # rather than rebuilt by ad-hoc string concatenation that could drift.
+    assert '$TotalPhaseStagingRoot = ".work\\vendor\\totalphase"' in text
+    assert '$EpiphanStagingRoot = ".work\\vendor\\epiphan"' in text
+    assert '"totalphase" = $TotalPhaseStagingRoot' in text
+    assert '"epiphan" = $EpiphanStagingRoot' in text
+    assert '$stagingRoot = if ($StageVendorArtifact -eq "TotalPhaseBeagleApi") { $TotalPhaseStagingRoot } else { $EpiphanStagingRoot }' in text
+    assert '$epiphanRoot = Join-Path $repoFull $EpiphanStagingRoot' in text
+    # No ad-hoc ".work\vendor\" + $vendor concatenation may remain.
+    assert '".work\\vendor\\" + $vendor' not in text
+
+
 def test_portable_staging_does_not_request_uac() -> None:
     text = _read(SCRIPT)
     stage_start = text.index("function Stage-VendorArtifact")

@@ -129,7 +129,7 @@ Post a four-hour `START` record containing:
 - planned validation;
 - explicit safety boundary.
 
-Renew with `CHECKPOINT` before expiry. Finish with `HANDOFF` and claim release.
+Renew with `CHECKPOINT` before expiry. Finish with `HANDOFF` and release the claim.
 
 ## 3. Create or reuse the isolated worktree
 
