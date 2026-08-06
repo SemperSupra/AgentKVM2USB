@@ -13,6 +13,19 @@ function Get-UtcTimestamp {
     return [DateTime]::UtcNow.ToString("o")
 }
 
+function Get-ObjectPropertyValue {
+    param(
+        [Parameter(Mandatory)]$InputObject,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+    return $property.Value
+}
+
 function Get-CommandRecord {
     param([Parameter(Mandatory)][string]$Name)
 
@@ -26,12 +39,18 @@ function Get-CommandRecord {
         }
     }
 
+    $path = Get-ObjectPropertyValue -InputObject $command -Name "Source"
+    if (-not $path) {
+        $path = Get-ObjectPropertyValue -InputObject $command -Name "Path"
+    }
+
     $version = $null
     try {
-        if ($command.Version) {
-            $version = $command.Version.ToString()
-        } elseif ($command.Source -and (Test-Path -LiteralPath $command.Source)) {
-            $version = (Get-Item -LiteralPath $command.Source).VersionInfo.FileVersion
+        $commandVersion = Get-ObjectPropertyValue -InputObject $command -Name "Version"
+        if ($commandVersion) {
+            $version = $commandVersion.ToString()
+        } elseif ($path -and (Test-Path -LiteralPath $path)) {
+            $version = (Get-Item -LiteralPath $path).VersionInfo.FileVersion
         }
     } catch {
         $version = $null
@@ -40,7 +59,7 @@ function Get-CommandRecord {
     return [ordered]@{
         name = $Name
         present = $true
-        path = $command.Source
+        path = $path
         version = $version
     }
 }
@@ -51,20 +70,30 @@ function Invoke-ReadOnlyCommand {
         [string[]]$ArgumentList = @()
     )
 
-    $stdoutPath = [IO.Path]::GetTempFileName()
-    $stderrPath = [IO.Path]::GetTempFileName()
     try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList `
-            -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $FilePath
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        foreach ($argument in $ArgumentList) {
+            [void]$startInfo.ArgumentList.Add($argument)
+        }
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
 
         return [ordered]@{
             executable = $FilePath
             arguments = @($ArgumentList)
             return_code = $process.ExitCode
-            stdout = (Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue)
-            stderr = (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue)
+            stdout = $stdout
+            stderr = $stderr
         }
     } catch {
         return [ordered]@{
@@ -74,8 +103,6 @@ function Invoke-ReadOnlyCommand {
             stdout = ""
             stderr = $_.Exception.Message
         }
-    } finally {
-        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -134,14 +161,15 @@ function Get-InstalledApplicationRecords {
     $records = @()
     foreach ($path in $paths) {
         foreach ($item in (Get-ItemProperty $path -ErrorAction SilentlyContinue)) {
-            if ($item.DisplayName -and $item.DisplayName -match $Pattern) {
+            $displayName = Get-ObjectPropertyValue -InputObject $item -Name "DisplayName"
+            if ($displayName -and $displayName -match $Pattern) {
                 $records += [ordered]@{
-                    display_name = $item.DisplayName
-                    display_version = $item.DisplayVersion
-                    publisher = $item.Publisher
-                    install_location = $item.InstallLocation
-                    uninstall_string = $item.UninstallString
-                    registry_path = $item.PSPath
+                    display_name = $displayName
+                    display_version = Get-ObjectPropertyValue -InputObject $item -Name "DisplayVersion"
+                    publisher = Get-ObjectPropertyValue -InputObject $item -Name "Publisher"
+                    install_location = Get-ObjectPropertyValue -InputObject $item -Name "InstallLocation"
+                    uninstall_string = Get-ObjectPropertyValue -InputObject $item -Name "UninstallString"
+                    registry_path = Get-ObjectPropertyValue -InputObject $item -Name "PSPath"
                 }
             }
         }
@@ -156,9 +184,10 @@ function Get-FileInventory {
         return [ordered]@{ configured = $false; exists = $false; root = $null; files = @() }
     }
 
-    $fullRoot = [IO.Path]::GetFullPath((Join-Path $RepoRoot $Root))
-    if ([IO.Path]::IsPathRooted($Root)) {
-        $fullRoot = [IO.Path]::GetFullPath($Root)
+    $fullRoot = if ([IO.Path]::IsPathRooted($Root)) {
+        [IO.Path]::GetFullPath($Root)
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $RepoRoot $Root))
     }
 
     if (-not (Test-Path -LiteralPath $fullRoot)) {
@@ -175,6 +204,15 @@ function Get-FileInventory {
     }
 
     return [ordered]@{ configured = $true; exists = $true; root = $fullRoot; files = @($files) }
+}
+
+function Get-TrimmedOutput {
+    param([Parameter(Mandatory)]$CommandRecord)
+
+    if ($null -eq $CommandRecord.stdout) {
+        return ""
+    }
+    return ([string]$CommandRecord.stdout).Trim()
 }
 
 $repoFull = [IO.Path]::GetFullPath($RepoRoot)
@@ -208,18 +246,23 @@ $tshark = Get-CommandRecord -Name "tshark.exe"
 $wireshark = Get-CommandRecord -Name "Wireshark.exe"
 $python = Get-CommandRecord -Name "python.exe"
 $pwsh = Get-CommandRecord -Name "pwsh.exe"
+$git = Get-CommandRecord -Name "git.exe"
+if (-not $git.present -or -not $git.path) {
+    throw "git.exe was not found."
+}
 
 $usbPcapEnumeration = $null
-if ($usbPcap.present) {
+if ($usbPcap.present -and $usbPcap.path) {
     $usbPcapEnumeration = Invoke-ReadOnlyCommand -FilePath $usbPcap.path -ArgumentList @("-d")
 }
 
-$gitStatus = Invoke-ReadOnlyCommand -FilePath "git.exe" -ArgumentList @("-C", $repoFull, "status", "--short", "--branch")
-$gitHead = Invoke-ReadOnlyCommand -FilePath "git.exe" -ArgumentList @("-C", $repoFull, "rev-parse", "HEAD")
-$gitBranch = Invoke-ReadOnlyCommand -FilePath "git.exe" -ArgumentList @("-C", $repoFull, "branch", "--show-current")
-$gitRemoteHead = Invoke-ReadOnlyCommand -FilePath "git.exe" -ArgumentList @("-C", $repoFull, "rev-parse", "origin/issue-22-workstation-capture-deps")
+$gitStatus = Invoke-ReadOnlyCommand -FilePath $git.path -ArgumentList @("-C", $repoFull, "status", "--short", "--branch")
+$gitHead = Invoke-ReadOnlyCommand -FilePath $git.path -ArgumentList @("-C", $repoFull, "rev-parse", "HEAD")
+$gitBranch = Invoke-ReadOnlyCommand -FilePath $git.path -ArgumentList @("-C", $repoFull, "branch", "--show-current")
+$gitRemoteHead = Invoke-ReadOnlyCommand -FilePath $git.path -ArgumentList @("-C", $repoFull, "rev-parse", "origin/issue-22-workstation-capture-deps")
 
-$drive = Get-PSDrive -Name ([IO.Path]::GetPathRoot($outputFull).TrimEnd('\').TrimEnd(':')) -ErrorAction SilentlyContinue
+$driveName = [IO.Path]::GetPathRoot($outputFull).TrimEnd('\').TrimEnd(':')
+$drive = Get-PSDrive -Name $driveName -ErrorAction SilentlyContinue
 $disk = if ($drive) {
     [ordered]@{
         root = $drive.Root
@@ -253,9 +296,9 @@ $record = [ordered]@{
     generated_utc = Get-UtcTimestamp
     repository = "SemperSupra/AgentKVM2USB"
     issue = 22
-    branch = ($gitBranch.stdout.Trim())
-    head = ($gitHead.stdout.Trim())
-    remote_branch_head = ($gitRemoteHead.stdout.Trim())
+    branch = Get-TrimmedOutput -CommandRecord $gitBranch
+    head = Get-TrimmedOutput -CommandRecord $gitHead
+    remote_branch_head = Get-TrimmedOutput -CommandRecord $gitRemoteHead
     live_disabled = $true
     collector_safety = [ordered]@{
         installs_software = $false
