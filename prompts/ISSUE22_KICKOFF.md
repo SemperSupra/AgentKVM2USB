@@ -19,7 +19,7 @@ If any item is missing, do not claim #22 and do not improvise acquisition. Repor
 
 The old issue-22-workstation-capture-deps branch and PR #26 are merged history. Reconcile every worktree without data loss, fast-forward only the clean canonical recovery checkout, and create a fresh isolated issue-22-readiness-completion branch from the current integration head. Open an early draft PR.
 
-Post a finite START claim. Run issue #27 -Plan and the issue #22 collector. Enumerate USBPcap interfaces read-only; do not start capture. Prove the exact KVM2USB PnP/container/interface/controller/hub/port mapping to the selected USBPcap root hub. Record physical topology, Beagle identity/placement, target identity, and harmless target state. Run no-live preflight and build-manifest until all verified gates pass with ok: true and live_disabled: true.
+Run claim preflight and refuse any unexpired conflicting claim. Post a finite START claim. Run issue #27 -Plan and the issue #22 collector. Enumerate USBPcap interfaces read-only; do not start capture. Prove the exact KVM2USB PnP/container/interface/controller/hub/port mapping to the selected USBPcap root hub. Record physical topology, Beagle identity/placement, target identity, and harmless target state. Run no-live preflight and build-manifest until all verified gates pass with ok: true and live_disabled: true.
 
 Do not acquire dependencies, capture, send target input, recable, reboot automatically, perform vendor OUT or persistent writes, or modify PR #13.
 
