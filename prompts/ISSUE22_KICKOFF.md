@@ -1,17 +1,27 @@
-# Issue #22 minimal kickoff
+# Issue #22 readiness-completion kickoff
 
-Use this only after issue #27 and Windows Package Foundry have made the required dependencies available.
+Use this only after issue #27 and Windows Package Foundry satisfy every entry-gate item.
 
 ```text
 Resume SemperSupra/AgentKVM2USB issue #22 from GitHub.
 
-Fetch current state and read issues #22, #27, and #14; Windows Package Foundry #1/#2; AGENTS.md; docs/ACTIVE_WORKSTREAMS.md; docs/ISSUE22_OPERATOR_RUNBOOK.md; and prompts/ISSUE22_WORKSTATION_CAPTURE_DEPS.md.
+Fetch/prune all remotes. Read docs/EXECUTION_CHECKPOINT.md, docs/ACTIVE_WORKSTREAMS.md, AGENTS.md, issues #22, #27, and #14 with all comments, Windows Package Foundry #1/#2, docs/ISSUE22_OPERATOR_RUNBOOK.md, and prompts/ISSUE22_WORKSTATION_CAPTURE_DEPS.md.
 
-Verify the issue #22 entry gate. If Wireshark/TShark, an approved USBPcap installation, Epiphan application/driver evidence, Total Phase API staging, or post-reboot verification is missing, do not claim #22. Report the blocker back to issue #27 or Package Foundry.
+Verify the entry gate before claiming:
+- pending reboot false after operator restart and verification;
+- Wireshark and TShark verified;
+- approved USBPcap path complete and USBPcapCMD.exe verified;
+- Epiphan application/driver evidence verified;
+- Total Phase API staged under ignored .work/vendor/totalphase with provenance;
+- no conflicting finite claim.
 
-The original issue-22-workstation-capture-deps branch and PR #26 are merged history. After lossless worktree reconciliation and claim preflight, create or reuse a fresh issue-22-readiness-completion branch and isolated worktree from the current recovery integration head. Open an early draft PR.
+If any item is missing, do not claim #22 and do not improvise acquisition. Report the exact blocker to issue #27 or the relevant Package Foundry issue.
 
-Post a four-hour START claim, execute the canonical prompt, prove the USBPcap interface-to-KVM2USB root-hub mapping, record topology and harmless target state, and run no-live preflight/build-manifest until the verified gates pass.
+The old issue-22-workstation-capture-deps branch and PR #26 are merged history. Reconcile every worktree without data loss, fast-forward only the clean canonical recovery checkout, and create a fresh isolated issue-22-readiness-completion branch from the current integration head. Open an early draft PR.
 
-Do not acquire dependencies, capture, send input, recable, reboot automatically, modify PR #13, or perform persistent device writes. Finish with CHECKPOINT, HANDOFF, claim release, and a clean worktree.
+Run claim preflight and refuse any unexpired conflicting claim. Post a finite START claim. Run issue #27 -Plan and the issue #22 collector. Enumerate USBPcap interfaces read-only; do not start capture. Prove the exact KVM2USB PnP/container/interface/controller/hub/port mapping to the selected USBPcap root hub. Record physical topology, Beagle identity/placement, target identity, and harmless target state. Run no-live preflight and build-manifest until all verified gates pass with ok: true and live_disabled: true.
+
+Do not acquire dependencies, capture, send target input, recable, reboot automatically, perform vendor OUT or persistent writes, or modify PR #13.
+
+Finish with exact evidence references, CHECKPOINT as needed, HANDOFF, claim release, and clean worktrees.
 ```

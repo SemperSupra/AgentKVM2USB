@@ -1,29 +1,33 @@
-# Issue #27 minimal kickoff
+# Issue #27 operator-actions kickoff
 
-Run this from `C:\Users\Mark\Projects\AgentKVM2USB` in the local agent session:
+Use this from `C:\Users\Mark\Projects\AgentKVM2USB` only while the operator is available to make reboot, consent, vendor-download, and license decisions.
 
 ```text
-Resume SemperSupra/AgentKVM2USB issue #27 and draft PR #28 from GitHub.
+Resume SemperSupra/AgentKVM2USB issue #27 from GitHub.
 
-Fetch all remotes and read issue #27, PR #28, AGENTS.md, docs/ACTIVE_WORKSTREAMS.md, docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md, and prompts/ISSUE27_OPERATOR_DEPENDENCIES.md from origin/issue-27-operator-dependencies.
+PR #28 is merged at recovery head 5a398ac529d1e050101a6f078153f3935498d6d2. Do not reuse or modify the historical issue-27-operator-dependencies branch.
 
-Reconcile every AgentKVM2USB worktree without data loss. Fast-forward the clean canonical recovery checkout only. Create or reuse a local tracking branch and isolated worktree for issue-27-operator-dependencies.
+Fetch/prune all remotes. Read docs/EXECUTION_CHECKPOINT.md, docs/ACTIVE_WORKSTREAMS.md, AGENTS.md, issue #27 and all comments, docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md, and Windows Package Foundry issues #1/#2.
 
-Run claim preflight and, if conflict-free, post a four-hour START claim. Execute the canonical prompt. Complete and validate the dependency preparation implementation, but run only -Plan and -WhatIf modes unless I am physically present and explicitly approve a named UAC action.
+Reconcile every AgentKVM2USB worktree without data loss. Fast-forward only a clean canonical recovery checkout. Run claim preflight. If conflict-free, post a finite START claim for the exact operator slice.
 
-Do not bypass or copy the minecraft-infra UAC helper. Do not directly install USBPcap. Do not automate vendor login, cookies, license acceptance, capture, target input, recabling, reboot, firmware, FPGA, EDID, flash, or proprietary publication. Do not modify PR #13.
+Use a fresh isolated worktree at the current recovery head. Prefer branch issue-27-operator-actions if a repository correction may be required. Do not open an empty PR; open a draft PR immediately if a genuine tracked-file defect is found.
 
-Update issue #27 and PR #28, post CHECKPOINT and HANDOFF, release the claim, and report the exact operator actions and remaining Package Foundry blockers.
-```
+First run:
+pwsh -NoProfile -File .\scripts\prepare_issue22_dependencies.ps1 -Plan
 
-Preferred worktree setup when absent:
+If pending_reboot is true, stop. Report the exact condition and ask the operator to restart Windows manually. Do not initiate or schedule a reboot. Post HANDOFF and release the claim. After restart, begin again under a fresh claim and rerun -Plan.
 
-```powershell
-git fetch --all --prune --tags
-if (-not (git branch --list issue-27-operator-dependencies)) {
-    git branch --track issue-27-operator-dependencies origin/issue-27-operator-dependencies
-}
-if (-not (Test-Path 'C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-27-operator-dependencies')) {
-    git worktree add 'C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-27-operator-dependencies' issue-27-operator-dependencies
-}
+Only while the operator is physically present and explicitly approves the named action, request Wireshark installation:
+pwsh -NoProfile -File .\scripts\prepare_issue22_dependencies.ps1 -Install Wireshark
+
+Do not directly install USBPcap. Keep it blocked until windows-package-foundry #1 classifies it foundry_eligible and #2 provides an approved reviewed package path.
+
+Stage Total Phase or Epiphan files only when the operator supplies the exact authorized local file, HTTPS source page, and acquisition UTC. Do not automate login, cookies, tokens, entitlement, download, or license acceptance. Do not elevate an Epiphan installer unless the script verifies the current valid Epiphan signature and provenance thumbprint.
+
+After each approved action, rerun -Plan and independently verify paths, versions, drivers, signatures, hashes, provenance, and reboot state.
+
+Do not capture, send target input, recable, or write firmware/FPGA/EDID/flash/persistent state. Do not modify PR #13.
+
+Correct genuine work-package defects only on the fresh branch with deterministic tests and an early draft PR. Finish with exact results, blockers, CHECKPOINT as needed, HANDOFF, claim release, and clean worktrees.
 ```
