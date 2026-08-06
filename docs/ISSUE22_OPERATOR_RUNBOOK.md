@@ -1,173 +1,91 @@
-# Issue #22 Operator Runbook
+# Issue #22 Readiness and USBPcap Mapping Runbook
 
-This runbook prepares the Windows workstation for the later issue #14 official-app differential experiment. It does not authorize capture or target input.
+Issue #22 begins after issue #27 has prepared the operator dependency path and the required dependencies are actually present. It owns readiness evidence, USBPcap root-hub mapping, topology confirmation, and no-live preflight.
 
-## Rules
+It does not acquire software and it does not authorize capture or target input.
 
-- The local agent may inspect and prepare commands but must not approve UAC or perform privileged installation.
-- The operator performs every elevated or physical action explicitly.
-- Stop after each action and verify the result before continuing.
-- Do not start USB capture, Beagle capture, application-driven target input, or recabling under issue #22.
-- Store vendor installers and APIs only under ignored/private paths. Record hashes and provenance; do not commit binaries.
+## Dependency handoff
 
-## Expected device context
+Use issue #27 and `docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md` for:
 
-Last verified workstation facts:
+- the shared `minecraft-infra` human-gated UAC helper;
+- exact WinGet installation of Wireshark/TShark;
+- fail-closed USBPcap handling through Windows Package Foundry #1/#2;
+- local ignored staging of Total Phase and Epiphan artifacts;
+- operator-present invocation of an exact staged vendor installer;
+- reboot detection without automatic reboot.
 
-- KVM2USB USB identity: `VID_2B77&PID_3661`;
-- previously observed serial/device suffix: `332837`;
-- parent hub: VIA Labs VL817, `VID_2109&PID_0817`;
-- Beagle USB 12 identity: `VID_1679&PID_2001`;
-- evidence volume previously had about 21.7 GiB free;
-- the 2 GiB disk gate passed;
-- the USBPcap-to-KVM2USB root-hub mapping remained unproven.
+Do not recreate those mechanisms under issue #22.
 
-Treat these as values to verify, not assumptions.
+## Entry gate
+
+Resume issue #22 only when all applicable facts are true:
+
+- Wireshark and TShark are independently verified;
+- USBPcap has an approved installation path and `USBPcapCMD.exe` is present;
+- the official Epiphan application and required driver state are verified;
+- the Total Phase Beagle API is staged under ignored `.work/vendor/totalphase/` with hashes/provenance;
+- any required reboot was separately approved, completed, and post-reboot health was checked;
+- no conflicting issue #22 claim exists.
+
+If an entry-gate item is missing, return to issue #27 or the relevant Package Foundry issue instead of improvising.
+
+## Branch and coordination
+
+The original `issue-22-workstation-capture-deps` branch and PR #26 supplied the merged readiness framework. Do not resume new work on that merged branch.
+
+For the completion slice, create a fresh branch from the current integration head after claim preflight, preferably:
+
+```text
+issue-22-readiness-completion
+```
+
+Use one isolated worktree, an early draft PR, a finite `START` claim, `CHECKPOINT` renewals, and a final `HANDOFF` with claim release.
 
 ## Stage 1 — Read-only inventory
 
 Run without elevation:
 
 ```powershell
-pwsh -NoProfile -File .\scripts\collect_issue22_readiness.ps1 -Pretty
+pwsh -NoProfile -File .\scripts\prepare_issue22_dependencies.ps1 -Plan
+pwsh -NoProfile -File .\scripts\collect_issue22_readiness.ps1 `
+  -BeagleApiDir .\.work\vendor\totalphase `
+  -Pretty
 ```
 
 Review:
 
 ```text
+.work/evidence/issue-27-operator-dependencies/plan.json
 .work/evidence/issue-22-workstation-capture-deps/readiness.json
 ```
 
-Confirm Git ignores it:
+Confirm both outputs are ignored. Stop if device identity differs from the expected KVM2USB or Beagle, the output path is not ignored, or a dependency has regressed.
 
-```powershell
-git check-ignore -v .work/evidence/issue-22-workstation-capture-deps/readiness.json
-```
+## Stage 2 — Read-only USBPcap enumeration
 
-Stop if the output path is not ignored or if device identity differs from the expected KVM2USB or Beagle.
-
-## Stage 2 — USBPcap and Wireshark/TShark
-
-### Operator action
-
-Open an elevated PowerShell terminal only after reviewing the package source and version.
-
-Preferred package commands recorded by issue #22:
-
-```powershell
-winget install --id WiresharkFoundation.USBPcap --exact --source winget
-winget install --id WiresharkFoundation.Wireshark --exact --source winget
-```
-
-Package availability and IDs must be verified by the operator before installation:
-
-```powershell
-winget show --id WiresharkFoundation.USBPcap --exact --source winget
-winget show --id WiresharkFoundation.Wireshark --exact --source winget
-```
-
-Do not accept unrelated packages or silently substitute another source.
-
-### Verification
-
-Run in a normal terminal:
+Locate and record the exact installed `USBPcapCMD.exe` path and version, then run enumeration only:
 
 ```powershell
 Get-Command USBPcapCMD.exe -ErrorAction Stop | Format-List Source,Version
-Get-Command tshark.exe -ErrorAction Stop | Format-List Source,Version
 & (Get-Command USBPcapCMD.exe).Source -d
-& (Get-Command tshark.exe).Source --version
 ```
 
-`USBPcapCMD.exe -d` is enumeration only. Do not pass an output file, buffer size, capture filter, or start-capture option.
+Do not pass an output filename, capture filter, buffer size, or any option that begins capture.
 
-### Rollback
+## Stage 3 — Prove the interface-to-root-hub mapping
 
-Only when the operator decides rollback is required:
-
-```powershell
-winget uninstall --id WiresharkFoundation.USBPcap --exact
-winget uninstall --id WiresharkFoundation.Wireshark --exact
-```
-
-A reboot may be required by USBPcap installation or removal. Record whether one occurred.
-
-## Stage 3 — Official Epiphan application and driver
-
-### Preparation
-
-Locate the official vendor package already obtained through an authorized source. Record:
-
-- source URL or account/download record;
-- package filename;
-- version;
-- SHA-256;
-- signer and signature status;
-- acquisition UTC.
-
-Example hash and signature inspection:
-
-```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath '<installer-path>'
-Get-AuthenticodeSignature -LiteralPath '<installer-path>' | Format-List Status,StatusMessage,SignerCertificate
-```
-
-### Operator action
-
-The operator runs the official signed installer interactively with elevation. Do not invent or use unattended installer switches unless vendor documentation explicitly supports them.
-
-### Verification
-
-```powershell
-Get-PnpDevice -PresentOnly | Where-Object InstanceId -Match 'VID_2B77&PID_3661' |
-  Format-Table Status,Class,FriendlyName,InstanceId -AutoSize
-```
-
-Also confirm the installed application path and version through its signed executable properties and the uninstall registry. Record driver provider, version, date, status, and device interface association.
-
-### Rollback
-
-Use the vendor-provided uninstaller or Windows Installed Apps. Record the exact uninstall entry discovered on this workstation; do not guess a command.
-
-## Stage 4 — Total Phase Beagle Windows API
-
-Stage the authorized Windows API package under:
-
-```text
-.work/vendor/totalphase/
-```
-
-Required records:
-
-- source and acquisition UTC;
-- archive filename and SHA-256;
-- extraction directory;
-- API/DLL versions;
-- hashes of the exact libraries used;
-- confirmation that the path is Git-ignored.
-
-Verification:
-
-```powershell
-git check-ignore -v .work/vendor/totalphase
-Get-ChildItem -Recurse .work/vendor/totalphase | Get-FileHash -Algorithm SHA256
-Get-PnpDevice -PresentOnly | Where-Object InstanceId -Match 'VID_1679&PID_2001' |
-  Format-Table Status,Class,FriendlyName,InstanceId -AutoSize
-```
-
-Do not call the Beagle capture API under issue #22.
-
-## Stage 5 — Prove the USBPcap mapping
-
-A valid mapping must bind all of the following:
+A valid mapping binds all of these:
 
 1. exact KVM2USB PnP instance;
-2. KVM2USB parent/composite and location path;
-3. VIA hub and root-controller lineage;
-4. an interface actually listed by `USBPcapCMD.exe -d`;
-5. the selected interface used in the preflight JSON.
+2. serial/device suffix and PnP ContainerId when available;
+3. MI_00, MI_01, and MI_03 interfaces;
+4. parent composite device;
+5. VIA hub, root controller, and port/location path;
+6. an interface actually reported by `USBPcapCMD.exe -d`;
+7. the exact selected interface represented in the preflight JSON.
 
-Collect PnP properties:
+Collect PnP evidence:
 
 ```powershell
 $kvm = Get-PnpDevice -PresentOnly | Where-Object InstanceId -Match 'VID_2B77&PID_3661'
@@ -184,83 +102,71 @@ foreach ($device in $kvm) {
         'DEVPKEY_Device_DriverProvider'
       ) | Format-Table KeyName,Data -AutoSize
 }
-
-USBPcapCMD.exe -d
 ```
 
-The mapping JSON supplied to `official_app_baseline.py` must use the exact schema shown by its CLI help and tests. A conceptual example is:
+Use the current CLI help and tests to build the exact `--interface-mapping` JSON schema. Do not copy a conceptual example or infer mapping merely because one interface is visible.
 
-```json
-{
-  "\\\\.\\USBPcap1": {
-    "contains_kvm2usb": true,
-    "device_instance_id": "USB\\VID_2B77&PID_3661\\332837",
-    "evidence": {
-      "container_id": "<verified-container-guid>",
-      "location_paths": ["<verified-location-path>"],
-      "parent_chain": ["<verified-parent-chain>"],
-      "usbpcap_enumeration": "<sanitized-enumeration-reference>"
-    }
-  }
-}
-```
-
-Do not copy the conceptual example directly. Generate the shape accepted by the current code and populate only verified workstation values.
-
-Fail the gate when:
+Fail closed when:
 
 - no USBPcap interface is detected;
-- an interface is mapped only because it is the sole interface;
-- the KVM2USB is globally present but not tied to that root hub;
-- location or parent evidence conflicts;
-- more than one mapping remains plausible.
+- the KVM2USB is globally present but not tied to the selected root hub;
+- parent/location evidence conflicts;
+- more than one mapping remains plausible;
+- the mapping depends on an unverified physical assumption.
 
-## Stage 6 — Physical topology and target state
+## Stage 4 — Physical topology and target state
 
-The operator must confirm and record:
+The operator records:
 
-- exact KVM2USB physical unit and serial/device instance;
-- host USB port and any intermediate hub;
-- KVM2USB target-side USB cable path;
-- Beagle position and orientation;
-- target identity;
-- current target screen/state;
-- confirmation that the target contains no sensitive data and can safely receive the later authorized harmless sequence.
+- exact KVM2USB unit and device identity;
+- host USB port and intermediate hub path;
+- target-side USB cable path;
+- Beagle identity, position, and orientation;
+- target identity and current screen/state;
+- confirmation that the target is harmless, non-sensitive, and suitable for a later bounded experiment.
 
-No recabling is permitted merely to complete this record. If the current topology is unsuitable, stop and propose a separate operator action.
+Do not recable merely to complete the record. A topology change is a separate explicit operator action.
 
-## Stage 7 — No-live preflight
+## Stage 5 — No-live preflight
 
-After all evidence is complete, run only the no-live commands described by the current CLI:
+Run only the no-live commands described by the current CLI:
 
 ```powershell
 python .\scripts\official_app_baseline.py preflight --help
 python .\scripts\official_app_baseline.py build-manifest --help
 ```
 
-Then invoke each command with the complete evidence arguments.
+Then invoke them with complete verified evidence.
 
 Issue #22 is complete when:
 
 - preflight reports `ok: true`;
 - `live_disabled` remains true;
-- the USBPcap mapping is positively proven;
-- tools, APIs, drivers, topology, target state, output root, and disk gates pass;
+- the selected USBPcap interface is positively mapped;
+- tools, APIs, applications, drivers, topology, target state, output root, and disk gates pass;
 - a valid manifest is generated;
-- no capture or target input occurs.
+- no capture or target input occurs;
+- sanitized results are recorded in GitHub and ignored `.work` storage.
 
-## Stage 8 — Handoff to issue #14
+## Stage 6 — Handoff to issue #14
 
 Do not start the experiment.
 
-Issue #14 still requires a new GitHub-backed, expiring authorization containing:
+Issue #14 requires a new GitHub-backed authorization containing:
 
 - exact experiment ID;
 - exact target and KVM2USB unit;
 - exact harmless allowed input sequence;
-- USBPcap interface;
-- Beagle placement;
+- exact USBPcap interface and Beagle placement;
 - private output root;
-- authority/operator;
+- operator/authority;
 - issued and expiry UTC;
 - stop conditions and forbidden actions.
+
+## Safety
+
+- No dependency acquisition outside issue #27.
+- No vendor login, cookies, tokens, personalized downloads, or automatic license acceptance.
+- No capture, target input, recabling, automatic reboot, vendor OUT, firmware, FPGA, EDID, flash, or persistent-device writes.
+- No proprietary binaries, raw captures, credentials, or private evidence in Git.
+- PR #13 remains untouched.

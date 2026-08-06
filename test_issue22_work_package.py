@@ -6,6 +6,7 @@ KICKOFF = ROOT / "prompts" / "ISSUE22_KICKOFF.md"
 PROMPT = ROOT / "prompts" / "ISSUE22_WORKSTATION_CAPTURE_DEPS.md"
 RUNBOOK = ROOT / "docs" / "ISSUE22_OPERATOR_RUNBOOK.md"
 COLLECTOR = ROOT / "scripts" / "collect_issue22_readiness.ps1"
+DEPENDENCY_SCRIPT = ROOT / "scripts" / "prepare_issue22_dependencies.ps1"
 
 
 def _read(path: Path) -> str:
@@ -14,53 +15,62 @@ def _read(path: Path) -> str:
 
 
 def test_issue22_work_package_files_exist() -> None:
-    for path in (KICKOFF, PROMPT, RUNBOOK, COLLECTOR):
+    for path in (KICKOFF, PROMPT, RUNBOOK, COLLECTOR, DEPENDENCY_SCRIPT):
         assert path.is_file()
 
 
-def test_minimal_kickoff_tracks_remote_branch_safely() -> None:
+def test_issue22_kickoff_uses_fresh_completion_branch() -> None:
     text = _read(KICKOFF)
     for required in (
-        "origin/issue-22-workstation-capture-deps",
-        "git branch --track issue-22-workstation-capture-deps",
-        "git worktree add",
-        "Run claim preflight",
-        "Do not install, elevate, capture, send input, recable",
-        "PR #26",
+        "issue #27",
+        "Windows Package Foundry #1/#2",
+        "issue-22-readiness-completion",
+        "claim preflight",
+        "START",
+        "CHECKPOINT",
+        "HANDOFF",
+        "PR #13",
     ):
         assert required in text
+    assert "origin/issue-22-workstation-capture-deps" not in text
 
 
-def test_prompt_preserves_claim_and_safety_boundaries() -> None:
+def test_prompt_preserves_claim_and_no_live_boundaries() -> None:
     text = _read(PROMPT)
     for required in (
-        "issue-22-workstation-capture-deps",
-        "recovery/agentkvm2usb-app-capabilities",
+        "Issue #27 owns dependency planning",
+        "issue-22-readiness-completion",
         "START",
         "CHECKPOINT",
         "HANDOFF",
         "release the claim",
-        "Do not install",
-        "Do not start",
+        "USBPcap interface-to-KVM2USB",
+        "live_disabled: true",
+        "no capture or target input",
         "PR #13",
-        "PR #7",
-        "live operation remained disabled",
     ):
         assert required in text
 
 
-def test_runbook_separates_operator_actions_from_agent_actions() -> None:
+def test_runbook_delegates_dependency_acquisition() -> None:
     text = _read(RUNBOOK)
     for required in (
-        "The operator performs every elevated or physical action explicitly.",
-        "winget show --id WiresharkFoundation.USBPcap",
-        "winget install --id WiresharkFoundation.USBPcap",
-        "winget uninstall --id WiresharkFoundation.USBPcap",
+        "Issue #22 begins after issue #27",
+        "does not acquire software",
+        "docs/ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md",
+        "issue-22-readiness-completion",
         "USBPcapCMD.exe -d",
         "Do not start the experiment.",
-        "expiring authorization",
+        "PR #13 remains untouched",
     ):
         assert required in text
+
+    assert "WiresharkFoundation.USBPcap" not in text
+    # The runbook delegates acquisition to issue #27 and must not contain a direct
+    # winget install command (e.g. the stale USBPcap package-ID invocation). Match
+    # the command signature, not prose such as "exact WinGet installation of ...".
+    assert "winget install --id" not in text.lower()
+    assert "winget.exe install" not in text.lower()
 
 
 def test_collector_is_fail_closed_and_no_live() -> None:
@@ -80,18 +90,17 @@ def test_collector_is_fail_closed_and_no_live() -> None:
     ):
         assert required in text
 
-    forbidden_executable_actions = (
+    lowered = text.lower()
+    for forbidden in (
         "winget install",
         "winget uninstall",
-        "Start-Process -Verb RunAs",
+        "start-process -verb runas",
         "runas.exe",
         "--execute-live",
         "--allow-live",
         "--force-live",
-    )
-    lowered = text.lower()
-    for forbidden in forbidden_executable_actions:
-        assert forbidden.lower() not in lowered
+    ):
+        assert forbidden not in lowered
 
 
 def test_collector_records_stable_device_identity_fields() -> None:
@@ -113,3 +122,16 @@ def test_readiness_output_is_private_by_default() -> None:
     text = _read(COLLECTOR)
     assert ".work\\evidence\\issue-22-workstation-capture-deps\\readiness.json" in text
     assert "writes_only_ignored_readiness_json = $true" in text
+
+
+def test_dependency_script_owns_install_and_vendor_staging_paths() -> None:
+    text = _read(DEPENDENCY_SCRIPT)
+    for required in (
+        "WiresharkFoundation.Wireshark",
+        "windows-package-foundry#1",
+        "windows-package-foundry#2",
+        ".work\\vendor\\totalphase",
+        ".work\\vendor\\epiphan",
+        "Invoke-Elevated",
+    ):
+        assert required in text
