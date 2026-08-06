@@ -1,27 +1,17 @@
 # Issue #22 minimal kickoff
 
-Run this from `C:\Users\Mark\Projects\AgentKVM2USB` in the local agent session:
+Use this only after issue #27 and Windows Package Foundry have made the required dependencies available.
 
 ```text
 Resume SemperSupra/AgentKVM2USB issue #22 from GitHub.
 
-Fetch all remotes and read issue #22, draft PR #26, AGENTS.md, docs/REMOTE_AGENT_COORDINATION.md, and prompts/ISSUE22_WORKSTATION_CAPTURE_DEPS.md from origin/issue-22-workstation-capture-deps.
+Fetch current state and read issues #22, #27, and #14; Windows Package Foundry #1/#2; AGENTS.md; docs/ACTIVE_WORKSTREAMS.md; docs/ISSUE22_OPERATOR_RUNBOOK.md; and prompts/ISSUE22_WORKSTATION_CAPTURE_DEPS.md.
 
-Reconcile all worktrees without data loss. Fast-forward the clean canonical recovery checkout only. If no local issue-22 branch exists, create a tracking branch from origin/issue-22-workstation-capture-deps; then create or reuse the isolated issue-22 worktree.
+Verify the issue #22 entry gate. If Wireshark/TShark, an approved USBPcap installation, Epiphan application/driver evidence, Total Phase API staging, or post-reboot verification is missing, do not claim #22. Report the blocker back to issue #27 or Package Foundry.
 
-Run claim preflight and, if conflict-free, post a four-hour START claim. Execute the canonical prompt exactly. Validate the new work package and run the read-only readiness collector. Do not install, elevate, capture, send input, recable, modify PR #7 or PR #13, or perform persistent device writes.
+The original issue-22-workstation-capture-deps branch and PR #26 are merged history. After lossless worktree reconciliation and claim preflight, create or reuse a fresh issue-22-readiness-completion branch and isolated worktree from the current recovery integration head. Open an early draft PR.
 
-Update issue #22 and PR #26, post CHECKPOINT and HANDOFF, release the claim, and report the exact human actions required next.
-```
+Post a four-hour START claim, execute the canonical prompt, prove the USBPcap interface-to-KVM2USB root-hub mapping, record topology and harmless target state, and run no-live preflight/build-manifest until the verified gates pass.
 
-Equivalent manual branch/worktree setup when absent:
-
-```powershell
-git fetch --all --prune --tags
-if (-not (git branch --list issue-22-workstation-capture-deps)) {
-    git branch --track issue-22-workstation-capture-deps origin/issue-22-workstation-capture-deps
-}
-if (-not (Test-Path 'C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-22-workstation-capture-deps')) {
-    git worktree add 'C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-22-workstation-capture-deps' issue-22-workstation-capture-deps
-}
+Do not acquire dependencies, capture, send input, recable, reboot automatically, modify PR #13, or perform persistent device writes. Finish with CHECKPOINT, HANDOFF, claim release, and a clean worktree.
 ```
