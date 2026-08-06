@@ -90,6 +90,22 @@ def test_script_uses_exact_winget_package_and_shared_helper() -> None:
         assert required in text
 
 
+def test_shared_helper_trust_requires_clean_tracked_origin_backed_file() -> None:
+    text = _read(SCRIPT)
+    for required in (
+        "ls-files --error-unmatch",
+        "diff --quiet",
+        "diff --cached --quiet",
+        "branch -r --contains HEAD",
+        "tracked = $tracked",
+        "worktree_clean = $worktreeClean",
+        "index_clean = $indexClean",
+        "head_on_origin = $headOnOrigin",
+        "clean, tracked, origin-backed",
+    ):
+        assert required in text
+
+
 def test_usbpcap_is_fail_closed_without_fallback() -> None:
     text = _read(SCRIPT)
     assert "Stop-UsbPcapInstall" in text
@@ -128,17 +144,20 @@ def test_vendor_staging_is_local_ignored_and_provenance_bound() -> None:
 
 def test_staging_roots_are_explicit_ignored_constants() -> None:
     text = _read(SCRIPT)
-    # The two vendor staging roots must be explicit named constants (so the exact
-    # ignored paths are auditable) and must be consumed from those constants
-    # rather than rebuilt by ad-hoc string concatenation that could drift.
     assert '$TotalPhaseStagingRoot = ".work\\vendor\\totalphase"' in text
     assert '$EpiphanStagingRoot = ".work\\vendor\\epiphan"' in text
     assert '"totalphase" = $TotalPhaseStagingRoot' in text
     assert '"epiphan" = $EpiphanStagingRoot' in text
     assert '$stagingRoot = if ($StageVendorArtifact -eq "TotalPhaseBeagleApi") { $TotalPhaseStagingRoot } else { $EpiphanStagingRoot }' in text
     assert '$epiphanRoot = Join-Path $repoFull $EpiphanStagingRoot' in text
-    # No ad-hoc ".work\vendor\" + $vendor concatenation may remain.
     assert '".work\\vendor\\" + $vendor' not in text
+
+
+def test_vendor_source_pages_require_https_without_personalized_data() -> None:
+    text = _read(SCRIPT)
+    assert 'if ($uri.Scheme -ne "https")' in text
+    assert "SourcePage must use HTTPS." in text
+    assert "query, fragment, credentials, token, or personalized data" in text
 
 
 def test_portable_staging_does_not_request_uac() -> None:
@@ -150,11 +169,14 @@ def test_portable_staging_does_not_request_uac() -> None:
     assert "Start-Process" not in stage_body
 
 
-def test_staged_epiphan_install_is_human_gated_and_hash_checked() -> None:
+def test_staged_epiphan_install_is_human_gated_hash_and_signature_checked() -> None:
     text = _read(SCRIPT)
     for required in (
         "Get-VerifiedStagedEpiphanInstaller",
         "hash no longer matches its provenance record",
+        "Authenticode signature is not valid",
+        "signer does not identify Epiphan",
+        "signer thumbprint no longer matches its provenance record",
         "Install-StagedEpiphanArtifact",
         "Import-TrustedUacHelper",
         "Invoke-Elevated",

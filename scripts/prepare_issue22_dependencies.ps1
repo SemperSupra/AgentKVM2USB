@@ -254,14 +254,46 @@ function Get-TrustedUacHelper {
 
         $topLevel = (& git -C $candidateRoot rev-parse --show-toplevel 2>$null | Out-String).Trim()
         $remote = (& git -C $candidateRoot config --get remote.origin.url 2>$null | Out-String).Trim()
-        $trusted = [bool]($topLevel -and $remote -and ($remote -match "(?i)(github\.com[:/])SupraCraft/minecraft-infra(?:\.git)?$"))
+        $headSha = (& git -C $candidateRoot rev-parse HEAD 2>$null | Out-String).Trim()
+        $helperGitPath = $HelperRelativePath.Replace('\', '/')
+
+        & git -C $candidateRoot ls-files --error-unmatch -- $helperGitPath *> $null
+        $tracked = ($LASTEXITCODE -eq 0)
+
+        & git -C $candidateRoot diff --quiet -- $helperGitPath
+        $worktreeClean = ($LASTEXITCODE -eq 0)
+
+        & git -C $candidateRoot diff --cached --quiet -- $helperGitPath
+        $indexClean = ($LASTEXITCODE -eq 0)
+
+        $originRefsContainingHead = @(
+            & git -C $candidateRoot branch -r --contains HEAD 2>$null |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -match '^origin/' -and $_ -notmatch ' -> ' }
+        )
+        $headOnOrigin = ($originRefsContainingHead.Count -gt 0)
+
+        $resolvedCandidate = [IO.Path]::GetFullPath($candidateRoot).TrimEnd('\')
+        $resolvedTopLevel = if ($topLevel) { [IO.Path]::GetFullPath($topLevel).TrimEnd('\') } else { $null }
+        $rootMatches = [bool]($resolvedTopLevel -and $resolvedCandidate.Equals($resolvedTopLevel, [StringComparison]::OrdinalIgnoreCase))
+        $originMatches = [bool]($remote -and ($remote -match "(?i)(github\.com[:/])SupraCraft/minecraft-infra(?:\.git)?$"))
+        $trusted = [bool]($rootMatches -and $originMatches -and $tracked -and $worktreeClean -and $indexClean -and $headOnOrigin)
 
         $candidates += [ordered]@{
             root = $candidateRoot
             helper_path = $helperPath
+            helper_git_path = $helperGitPath
             git_top_level = $topLevel
             origin = $remote
+            head_sha = $headSha
+            origin_refs_containing_head = @($originRefsContainingHead)
             expected_repository = $ExpectedHelperRepository
+            root_matches = $rootMatches
+            origin_matches = $originMatches
+            tracked = $tracked
+            worktree_clean = $worktreeClean
+            index_clean = $indexClean
+            head_on_origin = $headOnOrigin
             trusted = $trusted
             sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $helperPath).Hash.ToLowerInvariant()
         }
@@ -287,8 +319,8 @@ function Get-SanitizedSourcePage {
     if (-not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri)) {
         throw "SourcePage must be an absolute authoritative vendor page URL."
     }
-    if ($uri.Scheme -notin @("https", "http")) {
-        throw "SourcePage must use HTTP or HTTPS."
+    if ($uri.Scheme -ne "https") {
+        throw "SourcePage must use HTTPS."
     }
     if ($uri.Query -or $uri.Fragment -or $uri.UserInfo) {
         throw "SourcePage must not contain a query, fragment, credentials, token, or personalized data."
@@ -377,11 +409,11 @@ function Get-DependencyPlan {
 
     $hasTotalPhaseApi = @($stagedArtifacts | Where-Object { (Get-PropertyValue -InputObject $_ -Name "artifact_type") -eq "TotalPhaseBeagleApi" }).Count -gt 0
     $humanActions = @()
-    if (-not $helper.trusted) { $humanActions += "Restore or identify one trusted local SupraCraft/minecraft-infra checkout before any elevated action." }
+    if (-not $helper.trusted) { $humanActions += "Restore, fetch, or identify one clean tracked SupraCraft/minecraft-infra helper on an origin-backed commit before elevation." }
     if (-not $wireshark.present -or -not $tshark.present) { $humanActions += "Use the shared UAC helper to install exact package WiresharkFoundation.Wireshark from source winget." }
     if (-not $usbPcap.present) { $humanActions += "Complete windows-package-foundry #1/#2; USBPcap installation remains blocked with no fallback." }
     if (-not $hasTotalPhaseApi) { $humanActions += "Human downloads the authorized Total Phase artifact and stages it locally with provenance." }
-    if (-not $epiphanApps) { $humanActions += "Human obtains and stages the authorized Epiphan installer; request shared-helper UAC only when ready to run that exact file." }
+    if (-not $epiphanApps) { $humanActions += "Human obtains and stages the authorized Epiphan installer; request shared-helper UAC only after its valid Epiphan signature is verified." }
 
     return [ordered]@{
         schema_version = 1
@@ -451,7 +483,7 @@ function Write-PlanEvidence {
 function Import-TrustedUacHelper {
     $helper = Get-TrustedUacHelper
     if (-not $helper.trusted -or -not $helper.selected) {
-        throw "A single trusted $ExpectedHelperRepository checkout with $HelperRelativePath is required."
+        throw "A single clean, tracked, origin-backed $ExpectedHelperRepository checkout with $HelperRelativePath is required."
     }
 
     $helperPath = $helper.selected.helper_path
@@ -515,7 +547,7 @@ function Install-WiresharkPackage {
         -Actions @(
             "Install exact WinGet package $WiresharkPackageId from source $WiresharkPackageSource",
             "Write application files and registration that require administrator privileges",
-            "Return for independent executable and package verification"
+            "Return for independent executable verification"
         ) `
         -ScriptPath $PSCommandPath `
         -Arguments $arguments `
@@ -601,12 +633,35 @@ function Get-VerifiedStagedEpiphanInstaller {
     if ((Get-PropertyValue -InputObject $metadata -Name "artifact_type") -ne "EpiphanKvmApp") {
         throw "The provenance record is not for EpiphanKvmApp."
     }
+
     $expectedHash = [string](Get-PropertyValue -InputObject $metadata -Name "sha256")
     $currentHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $full).Hash.ToLowerInvariant()
     if (-not $expectedHash -or $currentHash -ne $expectedHash.ToLowerInvariant()) {
         throw "The staged installer hash no longer matches its provenance record."
     }
-    return [ordered]@{ path = $full; metadata = $metadata; extension = $extension }
+
+    $recordedAuthenticode = Get-PropertyValue -InputObject $metadata -Name "authenticode"
+    $currentAuthenticode = Get-AuthenticodeRecord -FilePath $full
+    if ($currentAuthenticode.status -ne "Valid") {
+        throw "The staged Epiphan installer Authenticode signature is not valid."
+    }
+    if (-not $currentAuthenticode.signer_subject -or $currentAuthenticode.signer_subject -notmatch "(?i)Epiphan") {
+        throw "The staged installer signer does not identify Epiphan."
+    }
+    if ($null -eq $recordedAuthenticode -or (Get-PropertyValue -InputObject $recordedAuthenticode -Name "status") -ne "Valid") {
+        throw "The provenance record does not contain a valid Epiphan signature result."
+    }
+    $recordedThumbprint = [string](Get-PropertyValue -InputObject $recordedAuthenticode -Name "signer_thumbprint")
+    if (-not $recordedThumbprint -or -not $currentAuthenticode.signer_thumbprint -or $recordedThumbprint -ne $currentAuthenticode.signer_thumbprint) {
+        throw "The staged installer signer thumbprint no longer matches its provenance record."
+    }
+
+    return [ordered]@{
+        path = $full
+        metadata = $metadata
+        extension = $extension
+        authenticode = $currentAuthenticode
+    }
 }
 
 function Install-StagedEpiphanArtifact {
@@ -615,7 +670,8 @@ function Install-StagedEpiphanArtifact {
     if ($ElevatedChild) {
         Assert-ElevatedChild
         $process = if ($verified.extension -eq ".msi") {
-            Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $verified.path) -Wait -PassThru
+            $msiArguments = "/i `"$($verified.path)`""
+            Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArguments -Wait -PassThru
         } else {
             Start-Process -FilePath $verified.path -Wait -PassThru
         }
@@ -633,11 +689,14 @@ function Install-StagedEpiphanArtifact {
     [void](Import-TrustedUacHelper)
     $filename = Get-PropertyValue -InputObject $verified.metadata -Name "filename"
     $sha256 = Get-PropertyValue -InputObject $verified.metadata -Name "sha256"
+    $signer = Get-PropertyValue -InputObject $verified.authenticode -Name "signer_subject"
+    $thumbprint = Get-PropertyValue -InputObject $verified.authenticode -Name "signer_thumbprint"
     $arguments = "-InstallStagedVendorArtifact EpiphanKvmApp -StagedPath $(Quote-ProcessArgument -Value $verified.path) -ElevatedChild -RepoRoot $(Quote-ProcessArgument -Value $repoFull)"
     [void](Invoke-Elevated `
         -Description "Run the exact staged Epiphan KVM2USB installer" `
         -Actions @(
             "Launch $filename with SHA-256 $sha256",
+            "Require valid signer $signer with certificate thumbprint $thumbprint",
             "Allow the vendor installer to register its application and driver",
             "Require the operator to review and accept every interactive installer decision",
             "Return for independent application, driver, and reboot-state verification"
