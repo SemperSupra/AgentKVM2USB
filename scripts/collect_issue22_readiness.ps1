@@ -284,10 +284,10 @@ $humanActions = @()
 if (-not $usbPcap.present) { $humanActions += "Install USBPcap with explicit operator elevation; verify USBPcapCMD.exe and enumerate with -d." }
 if (-not $tshark.present) { $humanActions += "Install Wireshark/TShark with explicit operator elevation; verify tshark --version." }
 if (-not $wireshark.present) { $humanActions += "Verify the Wireshark GUI installation path and signed version." }
-if ($epiphanApps.Count -eq 0) { $humanActions += "Install or verify the official signed Epiphan KVM2USB application and driver with explicit operator elevation." }
+if (-not $epiphanApps) { $humanActions += "Install or verify the official signed Epiphan KVM2USB application and driver with explicit operator elevation." }
 if (-not $beagleApi.exists) { $humanActions += "Stage the authorized Total Phase Windows Beagle API under ignored .work/vendor/totalphase and record hashes/provenance." }
-if ($kvmDevices.Count -eq 0) { $humanActions += "Connect and verify the intended KVM2USB unit before any later experiment." }
-if ($beagleDevices.Count -eq 0) { $humanActions += "Connect and verify the intended Total Phase Beagle device and driver." }
+if (-not $kvmDevices) { $humanActions += "Connect and verify the intended KVM2USB unit before any later experiment." }
+if (-not $beagleDevices) { $humanActions += "Connect and verify the intended Total Phase Beagle device and driver." }
 $humanActions += "Prove the exact USBPcap interface-to-KVM2USB root-hub mapping from PnP parent/location evidence and USBPcapCMD.exe -d output."
 $humanActions += "Record the physical cable path, Beagle position, exact target identity, and harmless non-sensitive target state."
 

@@ -34,10 +34,10 @@ Permitted:
 
 Prohibited:
 
-- automatic UAC approval or elevation;
-- installing, upgrading, uninstalling, or repairing software;
-- starting USBPcap, TShark, Wireshark, Beagle, camera, microphone, or screen capture;
-- sending keyboard, pointer, touch, macro, system-control, or other target input;
+- Do not install, upgrade, uninstall, or repair any software.
+- Do not start USBPcap, TShark, Wireshark, Beagle, camera, microphone, or screen capture.
+- Do not approve UAC or elevate privileges automatically.
+- Do not send keyboard, pointer, touch, macro, system-control, or other target input.
 - recabling or changing the Beagle position;
 - vendor OUT transfers;
 - firmware, FPGA, EDID, flash, or persistent device writes;
