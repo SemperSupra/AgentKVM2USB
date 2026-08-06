@@ -9,6 +9,7 @@ AGENTS = ROOT / "AGENTS.md"
 RUNBOOK = ROOT / "docs" / "ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md"
 ISSUE27 = ROOT / "prompts" / "ISSUE27_KICKOFF.md"
 ISSUE22 = ROOT / "prompts" / "ISSUE22_KICKOFF.md"
+DISPATCH = ROOT / "prompts" / "MULTI_AGENT_DISPATCH.md"
 
 
 def read(path: Path) -> str:
@@ -17,19 +18,51 @@ def read(path: Path) -> str:
 
 
 def test_checkpoint_and_dispatch_artifacts_exist() -> None:
-    for path in (ACTIVE, BACKLOG, CHECKPOINT, AGENTS, RUNBOOK, ISSUE27, ISSUE22):
+    for path in (
+        ACTIVE,
+        BACKLOG,
+        CHECKPOINT,
+        AGENTS,
+        RUNBOOK,
+        ISSUE27,
+        ISSUE22,
+        DISPATCH,
+    ):
         assert path.is_file()
 
 
-def test_post_pr28_state_is_current() -> None:
-    combined = "\n".join(read(path) for path in (ACTIVE, BACKLOG, CHECKPOINT, AGENTS, RUNBOOK, ISSUE27))
-    assert "5a398ac529d1e050101a6f078153f3935498d6d2" in combined
-    assert "PR #28: merged" in combined or "PR #28 is merged" in combined
+def test_integrated_resume_state_is_current() -> None:
+    combined = "\n".join(
+        read(path) for path in (ACTIVE, BACKLOG, CHECKPOINT, AGENTS, RUNBOOK, ISSUE27)
+    )
+    assert "e9f0abd73570bd44e5b00a95e81167b20f4524d1" in combined
+    assert "PR #32" in combined
+    assert "issue #31" in combined.lower()
+    assert "completed" in combined.lower()
+    assert "PR #28: merged" in combined or "PR #28 is merged" in combined or "PR #28 integrated" in combined
+
     for stale in (
         "draft PR #28",
         "Active dependency-work PR: draft PR #28",
         "run full local Windows validation for issue #27 / PR #28",
         "review and merge PR #28 after validation",
+        "Verified integration head: `5a398ac529d1e050101a6f078153f3935498d6d2`",
+    ):
+        assert stale not in combined
+
+
+def test_package_foundry_authority_is_unambiguous() -> None:
+    combined = "\n".join(read(path) for path in (ACTIVE, BACKLOG, CHECKPOINT, DISPATCH))
+
+    assert "SemperSupra/windows-package-foundry-private" in combined
+    assert "6f86487d2b6a4aafb37b1eb82e53f0529fa8d0de" in combined
+    assert "generated public deployment projection" in combined
+    assert "windows-package-foundry-private issue #2" in combined
+
+    for stale in (
+        "SemperSupra/windows-package-foundry issue #1",
+        "SemperSupra/windows-package-foundry issue #2",
+        "Repository:** `SemperSupra/windows-package-foundry`",
     ):
         assert stale not in combined
 
@@ -48,6 +81,24 @@ def test_active_lanes_define_exact_gates() -> None:
         "START",
         "CHECKPOINT",
         "HANDOFF",
+    ):
+        assert required in text
+
+    assert "Status:** complete and merged" in text
+    assert "Status:** next coding/research lane" in text
+
+
+def test_dispatch_blocks_premature_manual_usbpcap_install() -> None:
+    text = read(DISPATCH)
+    for required in (
+        "windows-package-foundry-private issue #2",
+        "The operator has offered to install USBPcap manually",
+        "Do not ask the operator to install it until",
+        "SHA-256 and signing state",
+        "uninstall and rollback procedure",
+        "Do not dispatch AgentKVM2USB issue #22",
+        "Do not dispatch issue #14",
+        "Do not modify, rebase, refresh, or merge PR #13",
     ):
         assert required in text
 
