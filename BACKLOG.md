@@ -39,7 +39,7 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [ ] **Vision-Conditional Macros:** Extend DSL with `WAIT_FOR_MOTION`, `WAIT_FOR_SIGNAL`, or `IF_MOTION_STOP` for feedback-loop automation.
 - [x] **Remote Control API (Headless Mode):** Add a dependency-free local JSON API for status, health, frame metadata/JPEG, macro listing, macro execution, named macro execution, and macro validation.
 - [ ] **OCR Integration:** Integrate `pytesseract` or `easyocr` to enable `WAIT_FOR_TEXT "Welcome"` and searchable screen content.
-- [ ] **Multi-KVM Dashboard:** Support a grid-view mode for users with 2-4 devices connected to a single host.
+- [ ] **Multi-KVM Dashboard:** Support a grid-view mode for users with 2-4 devices connected to a single host. This is Phase 7 work in issue #23 and must follow stable physical grouping, isolated workers, and target-addressed API routing.
 
 ## Testability and Repository Hygiene
 - [ ] **Structured Hardware Probe:** Keep expanding the script that emits JSON for HID endpoint state, camera enumeration, signal state, frame shape, frame statistics, and sample capture path.
@@ -49,3 +49,51 @@ This document tracks features requiring USB protocol sniffing (Wireshark/USBPcap
 - [x] **Configurable Session Output Root:** Lab automation can override the default `runtime_sessions/` root with `EpiphanKVM_SDK(runtime_root=...)`, `AGENTKVM2USB_SESSION_ROOT`, or `hardware_probe.py --runtime-root`.
 - [ ] **Persistent Profile Store:** Decide whether non-secret user presets should remain per-run or be promoted to a user profile directory outside the repository.
 - [ ] **Clean Windows Smoke Test:** Validate the portable ZIP on a clean Windows 11 machine with no repository checkout.
+
+## Multi-Device, Media, Audio, and Speech Future Work
+
+Canonical roadmap: issue #23 and `docs/MULTI_DEVICE_MEDIA_SPEECH_ROADMAP.md`.
+
+### Critical-path guard
+
+- [ ] **Complete Single-Device Bring-Up First:** Complete issue #22, issue #14, PR #13, and issue #8 Phase B before starting multi-device or speech implementation.
+- [ ] **Finish One-KVM Pointer Semantics:** Complete issue #8 Phase C relative mouse and Phase D pen/touch with target-receipt validation.
+
+### Stable KVM identity and resilience — issue #8 Phase E
+
+- [ ] **Physical KVM Grouping:** Group HID, UVC, and MI_00 by serial, PnP ContainerId, parent composite device, location path, hub, and port.
+- [ ] **Stable KVM IDs:** Expose persistent device IDs independent of transient camera indices.
+- [ ] **No-Mixing Selection:** Reject ambiguous, partial, duplicate, inaccessible, and cross-device collection sets.
+- [ ] **Per-Device Session Isolation:** Independent handles, locks, state, runtime roots, release-all, and reconnect behavior.
+- [ ] **Two-KVM Concurrency Test:** Monitor two KVM units and prove harmless input reaches only the selected target.
+- [ ] **USB Topology Evidence:** Record controller/hub/port placement for bandwidth policy.
+
+### Multi-target control plane — issue #12
+
+- [ ] **KVM Worker Process:** One supervised worker and exclusive UVC/HID ownership per physical KVM.
+- [ ] **TargetBundle Registry:** Associate target, KVM, KVM video, auxiliary media, audio adapters, session root, lease, and authorization.
+- [ ] **Target-Addressed API:** Replace the implicit single SDK API with `/targets/{target_id}/...` routes.
+- [ ] **Per-Target Lease and Emergency Stop:** Prevent concurrent conflicting control and release all input on stop/failure.
+- [ ] **Evidence Correlation:** Synchronize KVM actions, video, auxiliary media, notes, and results by UTC and correlation ID.
+
+### General media and controller-side speech — SemperSupra/AgentWebCam#3
+
+- [ ] **Stable Camera/Microphone/Speaker IDs:** Do not persist transient device indices.
+- [ ] **Media Workers and API:** Concurrent snapshot, video, timelapse, microphone recording, stop, health, and playback operations.
+- [ ] **Target Media Association:** Map front-panel, room, and status-light cameras to target bundles.
+- [ ] **Voice Notes / STT:** Push-to-talk recording with transcript, confidence, provider provenance, target, UTC, and optional synchronized image.
+- [ ] **TTS Feedback:** Explicit speaker routing, cancellation, structured result, and retention policy.
+- [ ] **Voice Command Safety:** Separate note/command modes, explicit target, confirmation, confidence refusal, stop command, and TTS/STT echo suppression.
+
+### Controlled-target audio — issue #24
+
+- [ ] **KVM2USB Audio Characterization:** Determine whether a real capture/playback stream exists; do not infer it from the audio-selector flag.
+- [ ] **External USB Audio Fallback:** Stable target-associated capture and injection adapters with no cross-target routing.
+- [ ] **Target Audio API:** Capability, capture, playback, injection, stop/mute, health, latency, and correlation operations.
+- [ ] **A/V and Privacy Validation:** Synchronization, clipping, feedback, hidden-capture prevention, retention, and operator indicators.
+
+### Scale and reliability
+
+- [ ] **USB Bandwidth Policy:** Controller-aware full-rate, reduced-rate, and snapshot-only profiles.
+- [ ] **Two-to-Four Target Dashboard:** Add only after stable IDs and target-addressed routing pass.
+- [ ] **Soak and Reconnect Testing:** Long-duration multi-KVM/media/audio operation with resource quotas and retention limits.
