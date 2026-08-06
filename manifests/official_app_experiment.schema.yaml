@@ -1,0 +1,218 @@
+# Schema for the synchronized official-Epiphan-app differential experiment.
+# This is the machine-readable manifest produced by scripts/official_app_baseline.py.
+# Raw captures, proprietary binaries, and restricted evidence never enter this
+# repository; the manifest records only sanitized identity, hashes, commands,
+# markers, and procedures.
+
+required:
+  - schema
+  - experiment
+  - environment
+  - capture
+  - authorization_record
+  - prohibited
+
+fields:
+  schema:
+    type: string
+    pattern: "^manifests/official_app_experiment.schema.yaml$"
+  experiment:
+    required:
+      - id
+      - objective
+      - operator
+      - date
+      - git_commit
+      - recovery_base_head
+    fields:
+      id:
+        type: string
+        description: Capture-session correlation ID, e.g. official-app-20260804T141700Z.
+      objective:
+        type: string
+      operator:
+        type: string
+      date:
+        type: string
+        format: yyyymmdd
+      git_commit:
+        type: string
+      recovery_base_head:
+        type: string
+  environment:
+    required:
+      - host_interface
+      - target_beagle_port
+      - usbpcap_present
+      - tshark_present
+      - beagle_windows_api_present
+      - official_app_present
+      - target_state_note
+      - usb_identity
+      - topology
+      - driver_state
+      - target_state_confirmed
+    fields:
+      host_interface:
+        type: string
+        nullable: true
+        description: Explicitly selected USBPcap root-hub/device interface. Never auto-selected from interfaces[0].
+      target_beagle_port:
+        type: integer
+      usbpcap_present:
+        type: boolean
+      tshark_present:
+        type: boolean
+      beagle_windows_api_present:
+        type: boolean
+      beagle_windows_api_dir:
+        type: string
+        nullable: true
+        description: Detected Total Phase Windows Beagle API directory; used as --api-dir. Never the evidence root.
+      official_app_present:
+        type: boolean
+      target_state_note:
+        type: string
+      usb_identity:
+        type: object
+        description: Detected KVM2USB USB identity (VID/PID/serial) on the selected interface.
+      topology:
+        type: object
+        description: Physical topology, cable path, Beagle position, target identity (detected or human-supplied).
+      driver_state:
+        type: object
+        description: Official Epiphan app/driver and Total Phase Beagle driver status.
+      target_state_confirmed:
+        type: boolean
+        description: Human confirmation that the target is in a harmless state for the allowed input sequence.
+  capture:
+    required:
+      - correlation_id
+      - output_root
+      - private_root
+      - event_markers
+    fields:
+      correlation_id:
+        type: string
+      output_root:
+        type: string
+        description: Resolved and verified under an approved ignored/private capture root.
+      private_root:
+        type: string
+        description: Approved ignored/private evidence root (e.g. .work/evidence).
+      event_markers:
+        type: array
+        items:
+          type: object
+          required:
+            - event
+            - description
+  authorization_record:
+    type: object
+    nullable: true
+    description: >-
+      The ingested, hash-pinned GitHub evidence envelope produced by
+      ingest_authorization(). A live capture is refused without a valid,
+      non-expired envelope whose values were parsed from the fetched issue
+      comment. The envelope stores the raw fetched evidence, the parsed
+      authorization_block, fetched UTC, and a SHA-256 of the canonicalized
+      evidence.
+    required:
+      - repository
+      - issue
+      - comment_id
+      - comment_url
+      - issue_url
+      - repository_url
+      - comment_body
+      - github_author
+      - fetched_utc
+      - authorization_block
+      - experiment_id
+      - target
+      - allowed_input_sequence
+      - issued_utc
+      - expires_utc
+      - authority
+      - evidence_sha256
+    fields:
+      repository:
+        type: string
+        description: The GitHub repository hosting the authorizing issue comment.
+      issue:
+        type: integer
+        description: The issue number whose comment authorized the experiment.
+      comment_id:
+        type: string
+        description: Exact GitHub issue-comment id that authorized the experiment.
+      comment_url:
+        type: string
+        description: html_url of the authorizing comment.
+      issue_url:
+        type: string
+        description: API issue_url of the authorizing comment.
+      repository_url:
+        type: string
+        description: API repository_url of the authorizing comment.
+      comment_body:
+        type: string
+        description: Raw fetched comment body containing the fenced JSON authorization block.
+      github_author:
+        type: string
+        description: GitHub login of the comment author; must equal the approved human authority.
+      fetched_utc:
+        type: string
+        description: UTC time the comment was fetched.
+      evidence_sha256:
+        type: string
+        description: SHA-256 of the canonicalized evidence envelope.
+      experiment_id:
+        type: string
+      target:
+        type: string
+      allowed_input_sequence:
+        type: array
+        items:
+          type: string
+      issued_utc:
+        type: string
+      expires_utc:
+        type: string
+      authority:
+        type: string
+        description: The human authority who authorized the experiment; must reference the GitHub author.
+      authorization_block:
+        type: object
+        description: The parsed fenced JSON authorization block from the comment body.
+        required:
+          - repository
+          - issue
+          - experiment_id
+          - target
+          - allowed_input_sequence
+          - issued_utc
+          - expires_utc
+          - authority
+        fields:
+          repository:
+            type: string
+          issue:
+            type: integer
+          experiment_id:
+            type: string
+          target:
+            type: string
+          allowed_input_sequence:
+            type: array
+            items:
+              type: string
+          issued_utc:
+            type: string
+          expires_utc:
+            type: string
+          authority:
+            type: string
+  prohibited:
+    type: array
+    items:
+      type: string
