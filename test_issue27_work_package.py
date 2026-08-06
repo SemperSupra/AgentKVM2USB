@@ -77,7 +77,9 @@ def test_script_uses_exact_winget_package_and_shared_helper() -> None:
         '$WiresharkPackageSource = "winget"',
         '$ExpectedHelperRepository = "SupraCraft/minecraft-infra"',
         '$HelperRelativePath = "scripts\\local\\Invoke-Elevated.ps1"',
-        "Import-Module -Name $helper.selected.helper_path",
+        'New-Module -Name "AgentKvmMinecraftInfraUac"',
+        ". $PathToHelper",
+        "Import-Module $module",
         "Invoke-Elevated",
         '"--id", $WiresharkPackageId',
         '"--source", $WiresharkPackageSource',
@@ -146,9 +148,10 @@ def test_staged_epiphan_install_is_human_gated_and_hash_checked() -> None:
         assert required in text
 
 
-def test_plan_is_no_live_and_reboot_is_report_only() -> None:
+def test_plan_and_whatif_are_fail_closed() -> None:
     text = _read(SCRIPT)
     for required in (
+        "SupportsShouldProcess = $true",
         "live_disabled = $true",
         "plan_elevates = $false",
         "plan_installs = $false",
@@ -156,6 +159,10 @@ def test_plan_is_no_live_and_reboot_is_report_only() -> None:
         "sends_target_input = $false",
         "initiates_reboot = $false",
         "reboot_initiated_by_script = $false",
+        "if ($WhatIfPreference",
+        "elevated_child_started = $false",
+        "installation_started = $false",
+        "vendor_installer_started = $false",
     ):
         assert required in text
 
