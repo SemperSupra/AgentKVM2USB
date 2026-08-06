@@ -1,4 +1,4 @@
-[CmdletBinding(DefaultParameterSetName = "Plan")]
+[CmdletBinding(DefaultParameterSetName = "Plan", SupportsShouldProcess = $true)]
 param(
     [Parameter(ParameterSetName = "Plan")]
     [switch]$Plan,
@@ -47,6 +47,18 @@ $HelperRelativePath = "scripts\local\Invoke-Elevated.ps1"
 
 function Get-UtcTimestamp {
     return [DateTime]::UtcNow.ToString("o")
+}
+
+function Get-PropertyValue {
+    param(
+        [Parameter(Mandatory = $true)]$InputObject,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($null -eq $InputObject) { return $null }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
 }
 
 function Test-IsAdministrator {
@@ -105,19 +117,18 @@ function Get-CommandRecord {
         return [ordered]@{ name = $Name; present = $false; path = $null; version = $null }
     }
 
-    $commandPath = $command.Source
-    if (-not $commandPath) { $commandPath = $command.Path }
+    $commandPath = Get-PropertyValue -InputObject $command -Name "Source"
+    if (-not $commandPath) { $commandPath = Get-PropertyValue -InputObject $command -Name "Path" }
 
     $version = $null
     try {
-        if ($command.Version) {
-            $version = $command.Version.ToString()
+        $commandVersion = Get-PropertyValue -InputObject $command -Name "Version"
+        if ($commandVersion) {
+            $version = $commandVersion.ToString()
         } elseif ($commandPath -and (Test-Path -LiteralPath $commandPath)) {
             $version = (Get-Item -LiteralPath $commandPath).VersionInfo.FileVersion
         }
-    } catch {
-        $version = $null
-    }
+    } catch {}
 
     return [ordered]@{ name = $Name; present = $true; path = $commandPath; version = $version }
 }
@@ -172,13 +183,14 @@ function Get-InstalledApplicationRecords {
     $records = @()
     foreach ($registryPath in $registryPaths) {
         foreach ($item in @(Get-ItemProperty $registryPath -ErrorAction SilentlyContinue)) {
-            if ($item.DisplayName -and $item.DisplayName -match $Pattern) {
+            $displayName = Get-PropertyValue -InputObject $item -Name "DisplayName"
+            if ($displayName -and $displayName -match $Pattern) {
                 $records += [ordered]@{
-                    display_name = $item.DisplayName
-                    display_version = $item.DisplayVersion
-                    publisher = $item.Publisher
-                    install_location = $item.InstallLocation
-                    registry_path = $item.PSPath
+                    display_name = $displayName
+                    display_version = Get-PropertyValue -InputObject $item -Name "DisplayVersion"
+                    publisher = Get-PropertyValue -InputObject $item -Name "Publisher"
+                    install_location = Get-PropertyValue -InputObject $item -Name "InstallLocation"
+                    registry_path = Get-PropertyValue -InputObject $item -Name "PSPath"
                 }
             }
         }
@@ -240,10 +252,7 @@ function Get-TrustedUacHelper {
 
         $topLevel = (& git -C $candidateRoot rev-parse --show-toplevel 2>$null | Out-String).Trim()
         $remote = (& git -C $candidateRoot config --get remote.origin.url 2>$null | Out-String).Trim()
-        $trusted = $false
-        if ($topLevel -and $remote) {
-            $trusted = ($remote -match "(?i)(github\.com[:/])SupraCraft/minecraft-infra(?:\.git)?$")
-        }
+        $trusted = [bool]($topLevel -and $remote -and ($remote -match "(?i)(github\.com[:/])SupraCraft/minecraft-infra(?:\.git)?$"))
 
         $candidates += [ordered]@{
             root = $candidateRoot
@@ -272,7 +281,7 @@ function Get-TrustedUacHelper {
 function Get-SanitizedSourcePage {
     param([Parameter(Mandatory = $true)][string]$Value)
 
-    $uri = $null
+    [Uri]$uri = $null
     if (-not [Uri]::TryCreate($Value, [UriKind]::Absolute, [ref]$uri)) {
         throw "SourcePage must be an absolute authoritative vendor page URL."
     }
@@ -288,7 +297,7 @@ function Get-SanitizedSourcePage {
 function Get-NormalizedAcquiredUtc {
     param([Parameter(Mandatory = $true)][string]$Value)
 
-    $parsed = [DateTimeOffset]::MinValue
+    [DateTimeOffset]$parsed = [DateTimeOffset]::MinValue
     if (-not [DateTimeOffset]::TryParse($Value, [ref]$parsed)) {
         throw "AcquiredUtc must be a valid ISO-8601 timestamp."
     }
@@ -360,11 +369,12 @@ function Get-DependencyPlan {
     $beagleDevices = Get-PnpRecords -Pattern "VID_1679&PID_2001"
     $stagedArtifacts = Get-StagedArtifactRecords -RepositoryRoot $RepositoryRoot
 
+    $hasTotalPhaseApi = @($stagedArtifacts | Where-Object { (Get-PropertyValue -InputObject $_ -Name "artifact_type") -eq "TotalPhaseBeagleApi" }).Count -gt 0
     $humanActions = @()
     if (-not $helper.trusted) { $humanActions += "Restore or identify one trusted local SupraCraft/minecraft-infra checkout before any elevated action." }
     if (-not $wireshark.present -or -not $tshark.present) { $humanActions += "Use the shared UAC helper to install exact package WiresharkFoundation.Wireshark from source winget." }
     if (-not $usbPcap.present) { $humanActions += "Complete windows-package-foundry #1/#2; USBPcap installation remains blocked with no fallback." }
-    if (-not @($stagedArtifacts | Where-Object { $_.artifact_type -eq "TotalPhaseBeagleApi" })) { $humanActions += "Human downloads the authorized Total Phase artifact and stages it locally with provenance." }
+    if (-not $hasTotalPhaseApi) { $humanActions += "Human downloads the authorized Total Phase artifact and stages it locally with provenance." }
     if (-not $epiphanApps) { $humanActions += "Human obtains and stages the authorized Epiphan installer; request shared-helper UAC only when ready to run that exact file." }
 
     return [ordered]@{
@@ -438,7 +448,12 @@ function Import-TrustedUacHelper {
         throw "A single trusted $ExpectedHelperRepository checkout with $HelperRelativePath is required."
     }
 
-    Import-Module -Name $helper.selected.helper_path -Force -ErrorAction Stop
+    $helperPath = $helper.selected.helper_path
+    $module = New-Module -Name "AgentKvmMinecraftInfraUac" -ArgumentList $helperPath -ScriptBlock {
+        param([string]$PathToHelper)
+        . $PathToHelper
+    }
+    Import-Module $module -Force -ErrorAction Stop
     if (-not (Get-Command Invoke-Elevated -ErrorAction SilentlyContinue)) {
         throw "The trusted helper did not export Invoke-Elevated."
     }
@@ -447,7 +462,7 @@ function Import-TrustedUacHelper {
 
 function Quote-ProcessArgument {
     param([Parameter(Mandatory = $true)][string]$Value)
-    return '"' + $Value.Replace('"', '\"') + '"'
+    return '"' + $Value.Replace('"', '""') + '"'
 }
 
 function Assert-ElevatedChild {
@@ -516,7 +531,6 @@ function Stage-VendorArtifact {
 
     $sourcePageSanitized = Get-SanitizedSourcePage -Value $SourcePage
     $acquiredUtcNormalized = Get-NormalizedAcquiredUtc -Value $AcquiredUtc
-
     $vendor = if ($StageVendorArtifact -eq "TotalPhaseBeagleApi") { "totalphase" } else { "epiphan" }
     $destinationRoot = Join-Path $repoFull (".work\vendor\" + $vendor)
     New-Item -ItemType Directory -Force -Path $destinationRoot | Out-Null
@@ -534,7 +548,6 @@ function Stage-VendorArtifact {
         Copy-Item -LiteralPath $sourceFull -Destination $destination
     }
 
-    $signature = Get-AuthenticodeRecord -FilePath $destination
     $metadata = [ordered]@{
         schema_version = 1
         artifact_type = $StageVendorArtifact
@@ -544,7 +557,7 @@ function Stage-VendorArtifact {
         staged_path = Get-RelativePath -BasePath $repoFull -TargetPath $destination
         length = (Get-Item -LiteralPath $destination).Length
         sha256 = $sourceHash
-        authenticode = $signature
+        authenticode = Get-AuthenticodeRecord -FilePath $destination
         source_page = $sourcePageSanitized
         acquired_utc = $acquiredUtcNormalized
         staged_utc = Get-UtcTimestamp
@@ -557,7 +570,6 @@ function Stage-VendorArtifact {
     $metadataPath = $destination + ".provenance.json"
     $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
     [void](Assert-GitIgnoredPath -RepositoryRoot $repoFull -CandidatePath $metadataPath)
-
     Write-Output ($metadata | ConvertTo-Json -Depth 8)
 }
 
@@ -579,11 +591,12 @@ function Get-VerifiedStagedEpiphanInstaller {
         throw "The staged installer is missing its provenance record."
     }
     $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-    if ($metadata.artifact_type -ne "EpiphanKvmApp") {
+    if ((Get-PropertyValue -InputObject $metadata -Name "artifact_type") -ne "EpiphanKvmApp") {
         throw "The provenance record is not for EpiphanKvmApp."
     }
+    $expectedHash = [string](Get-PropertyValue -InputObject $metadata -Name "sha256")
     $currentHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $full).Hash.ToLowerInvariant()
-    if ($currentHash -ne ([string]$metadata.sha256).ToLowerInvariant()) {
+    if (-not $expectedHash -or $currentHash -ne $expectedHash.ToLowerInvariant()) {
         throw "The staged installer hash no longer matches its provenance record."
     }
     return [ordered]@{ path = $full; metadata = $metadata; extension = $extension }
@@ -611,11 +624,13 @@ function Install-StagedEpiphanArtifact {
     }
 
     [void](Import-TrustedUacHelper)
+    $filename = Get-PropertyValue -InputObject $verified.metadata -Name "filename"
+    $sha256 = Get-PropertyValue -InputObject $verified.metadata -Name "sha256"
     $arguments = "-InstallStagedVendorArtifact EpiphanKvmApp -StagedPath $(Quote-ProcessArgument -Value $verified.path) -ElevatedChild -RepoRoot $(Quote-ProcessArgument -Value $repoFull)"
     [void](Invoke-Elevated `
         -Description "Run the exact staged Epiphan KVM2USB installer" `
         -Actions @(
-            "Launch $($verified.metadata.filename) with SHA-256 $($verified.metadata.sha256)",
+            "Launch $filename with SHA-256 $sha256",
             "Allow the vendor installer to register its application and driver",
             "Require the operator to review and accept every interactive installer decision",
             "Return for independent application, driver, and reboot-state verification"
@@ -635,6 +650,23 @@ $repoFull = [IO.Path]::GetFullPath($RepoRoot)
 if (-not (Test-Path -LiteralPath $repoFull -PathType Container)) { throw "RepoRoot does not exist: $repoFull" }
 & git -C $repoFull rev-parse --is-inside-work-tree *> $null
 if ($LASTEXITCODE -ne 0) { throw "RepoRoot is not a Git worktree: $repoFull" }
+
+if ($WhatIfPreference -and $PSCmdlet.ParameterSetName -ne "Plan") {
+    $preview = [ordered]@{
+        what_if = $true
+        requested_parameter_set = $PSCmdlet.ParameterSetName
+        install = $Install
+        stage_vendor_artifact = $StageVendorArtifact
+        install_staged_vendor_artifact = $InstallStagedVendorArtifact
+        elevated_child_started = $false
+        installation_started = $false
+        staging_started = $false
+        vendor_installer_started = $false
+        reboot_initiated = $false
+    }
+    Write-Output ($preview | ConvertTo-Json -Depth 4)
+    return
+}
 
 switch ($PSCmdlet.ParameterSetName) {
     "Install" {
