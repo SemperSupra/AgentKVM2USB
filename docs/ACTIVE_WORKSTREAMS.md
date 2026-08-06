@@ -6,6 +6,7 @@ This document is the current execution map for AgentKVM2USB. GitHub issues, pull
 
 - Integration branch: `recovery/agentkvm2usb-app-capabilities`
 - Last branch point for issue #27: `73f02886f48aa5340df78557a50bf209b0f5a123`
+- Active dependency-work PR: draft PR #28 from `issue-27-operator-dependencies`
 - Do not develop directly on the integration branch.
 - Every active slice uses one issue, one branch, one isolated worktree, one draft PR, and one finite claim.
 
@@ -16,7 +17,7 @@ windows-package-foundry #1 eligibility policy
               |
               +--> windows-package-foundry #2 USBPcap package
               |                       |
-AgentKVM2USB #27 dependency workflow --+
+AgentKVM2USB #27 / PR #28 dependency workflow --+
               |
               v
 AgentKVM2USB #22 readiness + USBPcap mapping
@@ -33,7 +34,7 @@ issue #8 Phases C-E -> issue #12 -> media/audio/speech roadmap
 
 ## Parallel work lanes
 
-### Lane A — AgentKVM2USB issue #27
+### Lane A — AgentKVM2USB issue #27 / PR #28
 
 **Branch:** `issue-27-operator-dependencies`
 
@@ -71,7 +72,7 @@ Does not own AgentKVM2USB scripts or hardware experiments.
 
 ### Lane C — AgentKVM2USB issue #22
 
-Blocked until issue #27 is usable and USBPcap has an approved installation path.
+Blocked until issue #27/PR #28 is usable and USBPcap has an approved installation path.
 
 Owns only:
 
@@ -111,18 +112,18 @@ Preferred locations:
 ```text
 C:\Users\Mark\Projects\AgentKVM2USB
 C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-27-operator-dependencies
-C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-22-workstation-capture-deps
+C:\Users\Mark\Projects\AgentKVM2USB-worktrees\issue-22-readiness-completion
 ```
 
 Before creating or changing a worktree, inspect every existing worktree, stash, local-only commit, detached head, untracked file, and ahead/behind state. Never use destructive cleanup to resolve ambiguity.
 
 ## Near-term momentum sequence
 
-1. Complete and locally validate issue #27 in its draft PR.
+1. Run local Windows validation for issue #27 / PR #28.
 2. In parallel, complete Windows Package Foundry #1 and #2.
-3. Merge issue #27 after review; do not wait for USBPcap packaging to merge the fail-closed workflow.
-4. Once an approved USBPcap path exists, use issue #27 to request human UAC and install dependencies.
-5. Resume issue #22 for mapping and no-live `ok: true`.
+3. Review and merge PR #28 after its fail-closed behavior passes; do not wait for USBPcap packaging to merge the blocked workflow.
+4. Once an approved USBPcap path exists, use issue #27 tooling to request human UAC and install dependencies.
+5. Resume issue #22 on a fresh `issue-22-readiness-completion` branch for mapping and no-live `ok: true`.
 6. Prepare a fresh issue #14 experiment authorization.
 7. Run the bounded experiment and use its evidence to unblock PR #13 target-receipt validation.
 
