@@ -10,6 +10,7 @@ RUNBOOK = ROOT / "docs" / "ISSUE27_OPERATOR_DEPENDENCY_RUNBOOK.md"
 ISSUE27 = ROOT / "prompts" / "ISSUE27_KICKOFF.md"
 ISSUE22 = ROOT / "prompts" / "ISSUE22_KICKOFF.md"
 DISPATCH = ROOT / "prompts" / "MULTI_AGENT_DISPATCH.md"
+OOM_RECOVERY = ROOT / "prompts" / "OOM_RECOVERY_KICKOFF.md"
 
 
 def read(path: Path) -> str:
@@ -27,16 +28,19 @@ def test_checkpoint_and_dispatch_artifacts_exist() -> None:
         ISSUE27,
         ISSUE22,
         DISPATCH,
+        OOM_RECOVERY,
     ):
         assert path.is_file()
 
 
 def test_integrated_resume_state_is_current() -> None:
     combined = "\n".join(
-        read(path) for path in (ACTIVE, BACKLOG, CHECKPOINT, AGENTS, RUNBOOK, ISSUE27)
+        read(path)
+        for path in (ACTIVE, BACKLOG, CHECKPOINT, AGENTS, RUNBOOK, ISSUE27, OOM_RECOVERY)
     )
-    assert "e9f0abd73570bd44e5b00a95e81167b20f4524d1" in combined
+    assert "831efef0fb21cf6fd6a77b6b655321201465551c" in combined
     assert "PR #32" in combined
+    assert "PR #34" in combined
     assert "issue #31" in combined.lower()
     assert "completed" in combined.lower()
     assert "PR #28: merged" in combined or "PR #28 is merged" in combined or "PR #28 integrated" in combined
@@ -47,6 +51,7 @@ def test_integrated_resume_state_is_current() -> None:
         "run full local Windows validation for issue #27 / PR #28",
         "review and merge PR #28 after validation",
         "Verified integration head: `5a398ac529d1e050101a6f078153f3935498d6d2`",
+        "Verified integration head: `e9f0abd73570bd44e5b00a95e81167b20f4524d1`",
     ):
         assert stale not in combined
 
@@ -76,6 +81,7 @@ def test_active_lanes_define_exact_gates() -> None:
         "Lane D — AgentKVM2USB issue #22",
         "Lane E — AgentKVM2USB issue #14",
         "Lane F — PR #13 / issue #8 Phase B",
+        "issue-2-usbpcap",
         "issue-27-operator-actions",
         "issue-22-readiness-completion",
         "START",
@@ -101,6 +107,21 @@ def test_dispatch_blocks_premature_manual_usbpcap_install() -> None:
         "Do not modify, rebase, refresh, or merge PR #13",
     ):
         assert required in text
+
+
+def test_oom_recovery_rejects_stale_compacted_handoffs() -> None:
+    combined = read(OOM_RECOVERY) + "\n" + read(CHECKPOINT) + "\n" + read(AGENTS)
+    for required in (
+        "CURRENT",
+        "HISTORICAL",
+        "CONFLICTING",
+        "Do not merely repeat a HISTORICAL report",
+        "A completed Issue #1 eligibility report is not a valid response",
+        "issue-2-usbpcap",
+        "Do not return only a summary of already-completed work",
+        "Never return a completed historical report as the result of a newly assigned lane",
+    ):
+        assert required in combined
 
 
 def test_issue27_kickoff_does_not_reuse_merged_branch() -> None:
