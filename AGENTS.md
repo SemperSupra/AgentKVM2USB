@@ -7,13 +7,16 @@ These rules govern AI-agent work in AgentKVM2USB.
 Before changing code or operating hardware, read:
 
 1. `docs/EXECUTION_CHECKPOINT.md` for the current verified resume state;
-2. `docs/ACTIVE_WORKSTREAMS.md` for lane ownership and sequencing;
-3. the assigned GitHub issue and every current comment;
-4. the assigned remote branch and draft PR, when any;
-5. the issue-specific runbook and canonical prompt;
-6. `PROJECT_STATUS.md` for historical hardware evidence and known protocol gaps.
+2. after an interrupted, compacted, restarted, or OOM session, execute `prompts/OOM_RECOVERY_KICKOFF.md` before trusting any recap;
+3. `docs/ACTIVE_WORKSTREAMS.md` for lane ownership and sequencing;
+4. the assigned GitHub issue and every current comment;
+5. the assigned remote branch and draft PR, when any;
+6. the issue-specific runbook and canonical prompt;
+7. `PROJECT_STATUS.md` for historical hardware evidence and known protocol gaps.
 
 The checkpoint and newer GitHub claims/comments supersede stale repository-triage text in historical documents.
+
+A pasted recap, compacted summary, previous handoff, or terminal scrollback is evidence only. Classify it as `CURRENT`, `HISTORICAL`, or `CONFLICTING` against live GitHub before acting. Never return a completed historical report as the result of a newly assigned lane.
 
 ## Repository coordination
 
@@ -32,7 +35,7 @@ PR #28 is merged. Issue #27 now owns only the remaining operator prerequisites a
 - Reuse `SupraCraft/minecraft-infra/scripts/local/Invoke-Elevated.ps1`; do not copy or reimplement its consent flow.
 - Accept the helper only when tracked, clean, unmodified, origin-backed, and unambiguous.
 - Prefer exact public WinGet packages.
-- Keep USBPcap blocked until Windows Package Foundry #1/#2 provide an approved package path.
+- Keep USBPcap blocked until `SemperSupra/windows-package-foundry-private#2` provides an approved package or reviewed manual path.
 - Treat Total Phase and Epiphan artifacts as operator-supplied, ignored local files.
 - Require a current valid Epiphan signature matching staged provenance before elevation.
 - Never automate vendor login, cookies, tokens, entitlements, personalized downloads, or license acceptance.
