@@ -121,3 +121,13 @@ packaging scripts, and GUI structure. It does not fully cover live UVC signal
 quality, HID injection against a target OS, DirectShow camera permission
 failures, long-running recording behavior, or packaging on a clean Windows
 machine.
+
+## Linux compatibility follow-up (#38)
+
+Descriptor-verified hidraw discovery handles Linux hidapi backends that omit
+collection usages. A device-specific plugdev rule enables unprivileged access,
+and V4L2 sysfs names enable KVM camera selection. Keyboard framing now uses
+report ID 1. Deterministic suite: 60 passed. Hardware collections open and
+host-side wake/release writes complete; captured video remains black and
+end-to-end keyboard receipt remains unproven. No target network recovery is
+claimed. Operational configuration and media remain private and uncommitted.

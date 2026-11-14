@@ -8,6 +8,12 @@ import re
 from epiphan_sdk import EpiphanKVM_SDK
 from frame_processor import MotionDetector, SRTGenerator, OverlayManager
 
+@pytest.fixture(autouse=True)
+def isolate_hardware(monkeypatch):
+    """Unit tests must never enumerate, capture or type into attached hardware."""
+    monkeypatch.setattr(EpiphanKVM_SDK, "_connect_hid", lambda self: None)
+    monkeypatch.setattr(EpiphanKVM_SDK, "_auto_start_video", lambda *args: None)
+
 class TestEpiphanKVM_Enhanced:
     """
     Enhanced Test Suite for the AgentKVM2USB SDK.

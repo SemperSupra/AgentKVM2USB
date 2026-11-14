@@ -44,9 +44,18 @@ pip install -r requirements.txt
 
 ### 2. Linux Permissions (One-time)
 ```bash
-echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2b77", ATTR{idProduct}=="3661", MODE="0666"' | sudo tee /etc/udev/rules.d/99-epiphan.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo install -m 0644 contrib/70-agentkvm2usb.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=change --subsystem-match=hidraw
+sudo udevadm settle
 ```
+
+The rule grants HID access to the `plugdev` group for this USB identity only.
+Ensure your user belongs to that group (log in again after changing membership).
+Linux hidapi backends that omit collection usages use a hidraw fallback only
+when the complete report descriptor matches the known KVM2USB profile.
+Keyboard writes use report ID 1; successful host writes do not prove target
+receipt. Linux camera names come from V4L2 sysfs for automatic KVM selection.
 
 ### 3. Usage Example
 ```python

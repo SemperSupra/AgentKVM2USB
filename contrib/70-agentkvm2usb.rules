@@ -1,0 +1,2 @@
+# HID access for the verified Epiphan KVM2USB; no access to other HID devices.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2b77", ATTRS{idProduct}=="3661", GROUP="plugdev", MODE="0660"
