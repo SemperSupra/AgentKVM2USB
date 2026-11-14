@@ -258,6 +258,16 @@ class EpiphanKVM_SDK:
 
     def _connect_hid(self):
         entries = hid.enumerate()
+        self._linux_hidraw = False
+        if platform.system() == "Linux" and any(
+            e.get("vendor_id") == 0x2b77 and e.get("product_id") == 0x3661
+            and not e.get("usage_page") and not e.get("usage") for e in entries
+        ):
+            from linux_kvm import enumerate_kvm_hidraw
+            linux_entries = enumerate_kvm_hidraw()
+            if linux_entries:
+                entries = linux_entries
+                self._linux_hidraw = True
         self.hid_discovery = discover_hid_devices(
             entries,
             profiles=(EPIPHAN_KVM2USB3_PROFILE,),
@@ -280,7 +290,11 @@ class EpiphanKVM_SDK:
         opened = []
         for role, record in selected.collections.items():
             try:
-                dev = hid.device()
+                if self._linux_hidraw:
+                    from linux_kvm import HidrawDevice
+                    dev = HidrawDevice()
+                else:
+                    dev = hid.device()
                 dev.open_path(record.path)
             except Exception as exc:
                 self.hid_diagnostics.append(DiscoveryDiagnostic(
@@ -344,7 +358,9 @@ class EpiphanKVM_SDK:
             for i in range(5):
                 c = cv2.VideoCapture(i, backend)
                 if c.isOpened():
-                    available.append((i, f"Camera {i}"))
+                    name_path = Path(f"/sys/class/video4linux/video{i}/name")
+                    name = name_path.read_text().strip() if name_path.exists() else f"Camera {i}"
+                    available.append((i, name))
                     c.release()
         return available
 
@@ -590,8 +606,8 @@ class EpiphanKVM_SDK:
         if not self.kb_dev: return
         r = [0x00]*8; r[0] = mods
         for i, k in enumerate(keys[:6]): r[2+i] = k
-        try: self.kb_dev.write([0x00] + r)
-        except: self.kb_dev.write(r)
+        # Descriptor declares report ID 1 and an eight-byte keyboard payload.
+        self.kb_dev.write([0x01] + r)
 
     def set_performance_mode(self, enabled):
         """Toggles between MJPG (compressed) and YUY2 (uncompressed) modes."""
